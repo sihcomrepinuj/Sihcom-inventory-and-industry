@@ -31,7 +31,7 @@
         </table>
     {% endif %}
 
-    {% if results.items %}
+    {% if results["items"] %}
         <h3>Items</h3>
         <table>
             <thead>
@@ -41,7 +41,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for item in results.items %}
+                {% for item in results["items"] %}
                 <tr>
                     <td><a href="/market/{{ item.type_id }}">{{ item.name }}</a></td>
                     <td class="text-right text-muted">{{ item.type_id }}</td>
@@ -51,7 +51,7 @@
         </table>
     {% endif %}
 
-    {% if not results.blueprints and not results.items %}
+    {% if not results.blueprints and not results["items"] %}
         <p>No results found for "{{ q }}".</p>
     {% endif %}
 {% elif q %}
