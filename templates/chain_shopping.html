@@ -103,11 +103,33 @@
 {% if missing == 0 %}
 <p class="status-ok"><strong>All materials on hand. Ready to build!</strong></p>
 {% else %}
-<p>Missing <strong>{{ missing }}</strong> material{{ 's' if missing != 1 else '' }}.</p>
+<p>Missing <strong>{{ missing }}</strong> material{{ 's' if missing != 1 else '' }}.
+<button class="outline" id="btn-multibuy" onclick="copyMultibuy()" style="margin-left:1rem;">Copy to Multibuy</button>
+</p>
 {% endif %}
 {% else %}
 <p>No materials found for this blueprint chain.</p>
 {% endif %}
 
 <p><a href="/chain/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}&sub_me={{ sub_me }}&reactions={{ '1' if resolve_reactions else '0' }}">&larr; Back to chain view</a></p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyMultibuy() {
+    const items = [
+        {% for mat in materials %}
+        {% if mat.deficit > 0 %}
+        { name: {{ mat.name | tojson }}, qty: {{ mat.deficit }} },
+        {% endif %}
+        {% endfor %}
+    ];
+    const text = items.map(i => `${i.name} ${i.qty}`).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('btn-multibuy');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy to Multibuy'; }, 2000);
+    });
+}
+</script>
 {% endblock %}

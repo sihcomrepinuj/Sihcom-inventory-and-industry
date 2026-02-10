@@ -117,6 +117,7 @@
 <!-- Dynamic shopping table (updates with build/buy checkboxes) -->
 <details open id="shopping-section">
     <summary><h3 style="display:inline">Shopping List Preview</h3></summary>
+    <p><button class="outline" id="btn-multibuy" onclick="copyMultibuy()" style="margin-top:0.5rem;">Copy to Multibuy</button></p>
     <table id="shopping-table">
         <thead>
             <tr>
@@ -250,6 +251,9 @@
 
         document.getElementById('shopping-total').textContent = fmtIsk(total) + ' ISK';
 
+        // Store current items for multibuy copy
+        window._currentShoppingItems = items;
+
         // Update chain shop link with buy_set
         const shopLink = document.getElementById('chain-shop-link');
         if (shopLink) {
@@ -276,6 +280,17 @@
             updateShoppingTable();
         });
     });
+
+    // Copy shopping list to clipboard in EVE Multibuy format
+    window.copyMultibuy = function() {
+        const items = window._currentShoppingItems || [];
+        const text = items.map(i => `${i.name} ${i.quantity}`).join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('btn-multibuy');
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy to Multibuy'; }, 2000);
+        });
+    };
 
     // View toggle
     window.showView = function(view) {
