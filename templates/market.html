@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — Market{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h2>{{ name }}</h2>
+    <p>Type ID: {{ type_id }}</p>
+</hgroup>
+
+{% if data.sell_orders == 0 and data.buy_orders == 0 %}
+<p>No market orders found in this region.</p>
+{% else %}
+<div class="grid">
+    <article>
+        <header>Prices</header>
+        <table>
+            <tr><td>Sell (lowest)</td><td class="text-right">{{ data.sell_min | isk }} ISK</td></tr>
+            <tr><td>Buy (highest)</td><td class="text-right">{{ data.buy_max | isk }} ISK</td></tr>
+            <tr><td>Spread</td><td class="text-right">{{ spread | isk }} ISK</td></tr>
+            <tr><td>Spread %</td><td class="text-right">{{ "%.1f" | format(spread_pct) }}%</td></tr>
+        </table>
+    </article>
+    <article>
+        <header>Volume</header>
+        <table>
+            <tr><td>Sell volume</td><td class="text-right">{{ data.sell_volume | commas }}</td></tr>
+            <tr><td>Buy volume</td><td class="text-right">{{ data.buy_volume | commas }}</td></tr>
+            <tr><td>Sell orders</td><td class="text-right">{{ data.sell_orders | commas }}</td></tr>
+            <tr><td>Buy orders</td><td class="text-right">{{ data.buy_orders | commas }}</td></tr>
+        </table>
+    </article>
+</div>
+{% endif %}
+
+{% if blueprint_id %}
+<p><a href="/blueprint/{{ blueprint_id }}" role="button" class="outline">View Blueprint / Materials</a></p>
+{% endif %}
+{% endblock %}

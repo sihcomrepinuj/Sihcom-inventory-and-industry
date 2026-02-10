@@ -1,0 +1,21 @@
+# Sensitive files
+config.json
+tokens.json
+
+# SDE database (too large for git, downloaded via setup_sde.py)
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Archives
+files.zip
+
+# Misc
+nul

@@ -1,0 +1,4 @@
+flask>=3.0
+gunicorn>=21.2
+preston>=4.12
+requests>=2.31

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Sihcom Industry{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root {
+            --pico-font-size: 15px;
+        }
+        table { font-size: 0.9rem; }
+        .text-right { text-align: right; }
+        .text-muted { opacity: 0.6; }
+        .status-ok { color: var(--pico-ins-color); }
+        .status-need { color: var(--pico-del-color); font-weight: bold; }
+        .flash { padding: 0.75rem 1rem; border-radius: var(--pico-border-radius); margin-bottom: 1rem; background: var(--pico-primary-background); }
+        .controls { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .controls label { margin-bottom: 0; }
+        .controls input, .controls select { margin-bottom: 0; width: auto; }
+        .grand-total { font-size: 1.1rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li><strong><a href="/">Sihcom Industry</a></strong></li>
+            </ul>
+            <ul>
+                {% if character_name %}
+                    <li>{{ character_name }}</li>
+                    <li><a href="/logout">Logout</a></li>
+                {% else %}
+                    <li><a href="/login" role="button" class="outline">Log in with EVE SSO</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </header>
+
+    <main class="container">
+        {% with messages = get_flashed_messages() %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container">
+        <small class="text-muted">Sihcom Industry Tracker &mdash; EVE Online</small>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Sihcom Industry — Search{% endblock %}
+
+{% block content %}
+<h2>Search</h2>
+<form method="get" action="/">
+    <fieldset role="group">
+        <input type="search" name="q" value="{{ q }}" placeholder="Search items or blueprints..." autofocus>
+        <button type="submit">Search</button>
+    </fieldset>
+</form>
+
+{% if results %}
+    {% if results.blueprints %}
+        <h3>Blueprints</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Blueprint</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bp in results.blueprints %}
+                <tr>
+                    <td><a href="/blueprint/{{ bp.blueprint_type_id }}">{{ bp.product_name }}</a></td>
+                    <td class="text-muted">{{ bp.blueprint_name }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+
+    {% if results.items %}
+        <h3>Items</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th class="text-right">Type ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in results.items %}
+                <tr>
+                    <td><a href="/market/{{ item.type_id }}">{{ item.name }}</a></td>
+                    <td class="text-right text-muted">{{ item.type_id }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+
+    {% if not results.blueprints and not results.items %}
+        <p>No results found for "{{ q }}".</p>
+    {% endif %}
+{% elif q %}
+    <p>No results found for "{{ q }}".</p>
+{% endif %}
+{% endblock %}

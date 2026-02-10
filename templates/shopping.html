@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{{ product_name }} — Shopping List{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h2>Shopping List: {{ product_name }}</h2>
+    <p>{{ bp_name }} &mdash; ME {{ me }}, {{ runs }} run{{ 's' if runs != 1 else '' }}{% if structure_bonus > 0 %}, structure bonus -{{ structure_bonus }}%{% endif %}</p>
+</hgroup>
+
+<form method="get" action="/shopping/{{ bp_id }}" class="controls">
+    <label>
+        ME
+        <select name="me">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == me %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Runs
+        <input type="number" name="runs" value="{{ runs }}" min="1" style="width:6rem">
+    </label>
+    <label>
+        Structure Bonus %
+        <input type="number" name="structure_bonus" value="{{ structure_bonus }}" min="0" step="0.1" style="width:6rem">
+    </label>
+    <button type="submit">Update</button>
+</form>
+
+{% if materials %}
+<table>
+    <thead>
+        <tr>
+            <th>Material</th>
+            <th class="text-right">Need</th>
+            <th class="text-right">Have</th>
+            <th class="text-right">Buy</th>
+            <th class="text-right">Jita Sell</th>
+            <th class="text-right">Est. Cost</th>
+            <th class="text-right">Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for mat in materials %}
+        <tr>
+            <td><a href="/market/{{ mat.type_id }}">{{ mat.name }}</a></td>
+            <td class="text-right">{{ mat.adjusted_quantity | commas }}</td>
+            <td class="text-right">{{ mat.have | commas }}</td>
+            <td class="text-right">{{ mat.deficit | commas }}</td>
+            <td class="text-right">{{ mat.sell_price | isk }}</td>
+            <td class="text-right">{{ mat.buy_cost | isk }}</td>
+            <td class="text-right">
+                {% if mat.deficit == 0 %}
+                    <span class="status-ok">OK</span>
+                {% else %}
+                    <span class="status-need">NEED</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td colspan="5" class="text-right grand-total">Estimated Buy Cost</td>
+            <td class="text-right grand-total">{{ total_buy_cost | isk }} ISK</td>
+            <td></td>
+        </tr>
+    </tfoot>
+</table>
+
+{% set missing = materials | selectattr('deficit', 'greaterthan', 0) | list | length %}
+{% if missing == 0 %}
+<p class="status-ok"><strong>All materials on hand. Ready to build!</strong></p>
+{% else %}
+<p>Missing <strong>{{ missing }}</strong> material{{ 's' if missing != 1 else '' }}.</p>
+{% endif %}
+{% else %}
+<p>No manufacturing materials found for this blueprint.</p>
+{% endif %}
+
+<p><a href="/blueprint/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}">&larr; Back to materials view</a></p>
+{% endblock %}

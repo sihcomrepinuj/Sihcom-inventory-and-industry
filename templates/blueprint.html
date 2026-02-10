@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}{{ product_name }} — Materials{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h2>{{ product_name }}</h2>
+    <p>{{ bp_name }}</p>
+</hgroup>
+
+<form method="get" action="/blueprint/{{ bp_id }}" class="controls" id="controls">
+    <label>
+        ME
+        <select name="me" id="me-select">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == me %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Runs
+        <input type="number" name="runs" id="runs-input" value="{{ runs }}" min="1" style="width:6rem">
+    </label>
+    <label>
+        Structure Bonus %
+        <input type="number" name="structure_bonus" id="struct-input" value="{{ structure_bonus }}" min="0" step="0.1" style="width:6rem">
+    </label>
+    <noscript><button type="submit">Update</button></noscript>
+</form>
+
+{% if materials %}
+<table id="materials-table">
+    <thead>
+        <tr>
+            <th>Material</th>
+            <th class="text-right">Per Run</th>
+            <th class="text-right">Total (ME {{ me }})</th>
+            <th class="text-right">Saved</th>
+            <th class="text-right">Jita Sell</th>
+            <th class="text-right">Total Cost</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for mat in materials %}
+        <tr>
+            <td><a href="/market/{{ mat.type_id }}">{{ mat.name }}</a></td>
+            <td class="text-right">{{ mat.base_quantity | commas }}</td>
+            <td class="text-right" data-field="adjusted">{{ mat.adjusted_quantity | commas }}</td>
+            <td class="text-right" data-field="saved">{{ mat.saved | commas }}</td>
+            <td class="text-right" data-field="sell">{{ mat.sell_price | isk }}</td>
+            <td class="text-right" data-field="cost">{{ mat.line_cost | isk }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td colspan="5" class="text-right grand-total">Estimated Material Cost</td>
+            <td class="text-right grand-total" id="grand-total">{{ grand_total | isk }} ISK</td>
+        </tr>
+    </tfoot>
+</table>
+{% else %}
+<p>No manufacturing materials found for this blueprint.</p>
+{% endif %}
+
+{% if base_time %}
+<p>Base manufacturing time (per run): <strong>{{ base_time | ftime }}</strong></p>
+{% endif %}
+
+{% if invention_products %}
+<details>
+    <summary>Invention Outcomes</summary>
+    <ul>
+        {% for p in invention_products %}
+        <li>{{ p.name }} x{{ p.quantity }}</li>
+        {% endfor %}
+    </ul>
+    {% if invention_materials %}
+    <p><strong>Invention materials:</strong></p>
+    <ul>
+        {% for m in invention_materials %}
+        <li>{{ m.quantity | commas }}x {{ m.name }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</details>
+{% endif %}
+
+{% if character_name %}
+<p><a href="/shopping/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button">Shopping List (check assets)</a></p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const bpId = {{ bp_id }};
+    const meSelect = document.getElementById('me-select');
+    const runsInput = document.getElementById('runs-input');
+    const structInput = document.getElementById('struct-input');
+    const tbody = document.querySelector('#materials-table tbody');
+    const grandTotal = document.getElementById('grand-total');
+
+    if (!tbody) return;
+
+    let timer = null;
+    function scheduleUpdate() {
+        clearTimeout(timer);
+        timer = setTimeout(fetchMaterials, 300);
+    }
+
+    meSelect.addEventListener('change', scheduleUpdate);
+    runsInput.addEventListener('input', scheduleUpdate);
+    structInput.addEventListener('input', scheduleUpdate);
+
+    function fmtNum(n) { return n.toLocaleString(); }
+    function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+    function fetchMaterials() {
+        const me = meSelect.value;
+        const runs = runsInput.value || 1;
+        const sb = structInput.value || 0;
+        const url = `/api/materials/${bpId}?me=${me}&runs=${runs}&structure_bonus=${sb}`;
+
+        fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                const rows = tbody.querySelectorAll('tr');
+                data.materials.forEach((mat, i) => {
+                    if (!rows[i]) return;
+                    const cells = rows[i].querySelectorAll('td');
+                    cells[2].textContent = fmtNum(mat.adjusted_quantity);
+                    cells[3].textContent = fmtNum(mat.saved);
+                    cells[4].textContent = fmtIsk(mat.sell_price);
+                    cells[5].textContent = fmtIsk(mat.line_cost);
+                });
+                grandTotal.textContent = fmtIsk(data.grand_total) + ' ISK';
+
+                // Update ME label in header
+                const th = document.querySelector('#materials-table thead th:nth-child(3)');
+                if (th) th.textContent = `Total (ME ${me})`;
+            })
+            .catch(err => console.error('Failed to update materials:', err));
+    }
+})();
+</script>
+{% endblock %}
