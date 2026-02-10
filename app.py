@@ -122,6 +122,20 @@ def login_required(f):
 # Jinja2 filters
 # ------------------------------------------------------------------
 
+@app.route("/debug/config")
+def debug_config():
+    """Temporary debug route — shows whether ESI env vars are set."""
+    config = get_esi_config()
+    return jsonify({
+        "client_id_set": bool(config["client_id"]),
+        "client_id_length": len(config["client_id"]),
+        "client_id_preview": config["client_id"][:4] + "..." if config["client_id"] else "(empty)",
+        "client_secret_set": bool(config["client_secret"]),
+        "callback_url": config["callback_url"],
+        "user_agent": config["user_agent"],
+    })
+
+
 @app.template_filter("isk")
 def isk_filter(value):
     if not value:
