@@ -5,8 +5,10 @@ Reuses sde.py and esi.py for all data operations.
 Deployable to Railway with gunicorn.
 """
 
+import logging
 import os
 import secrets
+import traceback
 from functools import wraps
 
 from flask import (
@@ -24,6 +26,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# Log errors to stdout so Railway can capture them
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@app.errorhandler(Exception)
+def handle_error(e):
+    logger.error(f"Unhandled error: {e}\n{traceback.format_exc()}")
+    return f"<h1>Error</h1><pre>{e}</pre>", 500
 
 
 # ------------------------------------------------------------------
