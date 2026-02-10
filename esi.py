@@ -30,8 +30,6 @@ SCOPES = " ".join([
     "esi-industry.read_corporation_jobs.v1",
     "esi-markets.read_character_orders.v1",
     "esi-markets.read_corporation_orders.v1",
-    "esi-industry.read_character_mining.v1",
-    "esi-industry.read_corporation_mining.v1",
 ])
 
 CONFIG_FILE = "config.json"
