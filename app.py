@@ -19,6 +19,8 @@ from preston import Preston
 
 from sde import (
     SDE, calculate_materials, ACTIVITY_MANUFACTURING, ACTIVITY_INVENTION,
+    resolve_material_chain, flatten_material_tree, get_chain_summary,
+    MaterialNode,
 )
 import esi
 
@@ -284,6 +286,212 @@ def api_materials(bp_id):
             grand_total += mat["line_cost"]
 
     return jsonify(materials=materials, grand_total=grand_total)
+
+
+# ------------------------------------------------------------------
+# Routes — chain resolution
+# ------------------------------------------------------------------
+
+def _nodes_to_dict(nodes: list[MaterialNode]) -> list[dict]:
+    """Convert MaterialNode tree to JSON-serializable dicts."""
+    result = []
+    for node in nodes:
+        d = {
+            "type_id": node.type_id,
+            "name": node.name,
+            "quantity": node.quantity_needed,
+            "is_terminal": node.is_terminal,
+            "activity_name": node.activity_name,
+            "me_level": node.me_level,
+            "depth": node.depth,
+            "children": _nodes_to_dict(node.children) if node.children else [],
+        }
+        result.append(d)
+    return result
+
+
+@app.route("/chain/<int:bp_id>")
+def chain(bp_id):
+    """Full material chain with interactive build/buy tree."""
+    me = int(request.args.get("me", 10))
+    runs = int(request.args.get("runs", 1))
+    structure_bonus = float(request.args.get("structure_bonus", 0))
+    sub_me = int(request.args.get("sub_me", 10))
+    resolve_reactions = request.args.get("reactions", "1") == "1"
+
+    sde = get_sde()
+    region_id = esi.get_market_region()
+
+    bp_name = sde.get_type_name(bp_id)
+    product_id = sde.find_product_for_blueprint(bp_id)
+    product_name = sde.get_type_name(product_id) if product_id else bp_name
+
+    # Resolve the full chain
+    tree = resolve_material_chain(
+        sde, bp_id, me, runs, structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    )
+
+    # Flatten to raw materials (default — all resolved)
+    raw_materials = flatten_material_tree(tree)
+
+    # Summary stats
+    summary = get_chain_summary(tree)
+
+    # Price everything: intermediates + raw materials
+    all_type_ids = list(set(
+        [m["type_id"] for m in raw_materials]
+        + [i["type_id"] for i in summary["intermediates"]]
+    ))
+    prices = esi.get_bulk_market_data(all_type_ids, region_id) if all_type_ids else {}
+
+    # Attach prices to raw materials
+    raw_total = 0.0
+    for mat in raw_materials:
+        sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
+        mat["sell_price"] = sell_price
+        mat["line_cost"] = sell_price * mat["quantity"]
+        raw_total += mat["line_cost"]
+
+    # Price intermediates for buy-vs-build
+    for inter in summary["intermediates"]:
+        sell_price = prices.get(inter["type_id"], {}).get("sell_min", 0.0)
+        inter["sell_price"] = sell_price
+        inter["buy_cost"] = sell_price * inter["quantity"]
+
+    # Tree data for template + JS
+    tree_data = _nodes_to_dict(tree)
+
+    return render_template(
+        "chain.html",
+        bp_id=bp_id, bp_name=bp_name, product_name=product_name,
+        me=me, runs=runs, structure_bonus=structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+        tree_data=tree_data,
+        raw_materials=raw_materials, raw_total=raw_total,
+        summary=summary, prices=prices,
+        character_name=session.get("character_name"),
+    )
+
+
+@app.route("/chain/shopping/<int:bp_id>")
+@login_required
+def chain_shopping(bp_id):
+    """Chain-resolved shopping list vs corp/personal assets."""
+    me = int(request.args.get("me", 10))
+    runs = int(request.args.get("runs", 1))
+    structure_bonus = float(request.args.get("structure_bonus", 0))
+    sub_me = int(request.args.get("sub_me", 10))
+    resolve_reactions = request.args.get("reactions", "1") == "1"
+    source = request.args.get("source", "corp")
+
+    # Parse buy_set from comma-separated type_ids
+    buy_param = request.args.get("buy", "")
+    buy_set = None
+    if buy_param:
+        try:
+            buy_set = set(int(x) for x in buy_param.split(",") if x.strip())
+        except ValueError:
+            buy_set = None
+
+    sde = get_sde()
+    region_id = esi.get_market_region()
+
+    bp_name = sde.get_type_name(bp_id)
+    product_id = sde.find_product_for_blueprint(bp_id)
+    product_name = sde.get_type_name(product_id) if product_id else bp_name
+
+    tree = resolve_material_chain(
+        sde, bp_id, me, runs, structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    )
+
+    # Flatten with buy_set to get the final shopping list
+    shopping_materials = flatten_material_tree(tree, buy_set=buy_set)
+    summary = get_chain_summary(tree)
+
+    # Fetch assets
+    p = get_authed_preston_from_session()
+    if not p:
+        flash("Session expired. Please log in again.")
+        return redirect(url_for("login"))
+
+    character_id = int(session["character_id"])
+    corporation_id = session.get("corporation_id")
+
+    if source == "corp" and corporation_id:
+        assets = esi.fetch_corp_assets(p, corporation_id)
+    else:
+        assets = esi.fetch_assets(p, character_id)
+        source = "personal"
+
+    asset_index = esi.build_asset_index(assets)
+    session["refresh_token"] = p.refresh_token
+
+    # Calculate deficits and costs
+    total_buy_cost = 0.0
+    type_ids = [m["type_id"] for m in shopping_materials]
+    prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
+
+    for mat in shopping_materials:
+        mat["have"] = asset_index.get(mat["type_id"], 0)
+        mat["deficit"] = max(0, mat["quantity"] - mat["have"])
+        sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
+        mat["sell_price"] = sell_price
+        mat["buy_cost"] = sell_price * mat["deficit"]
+        total_buy_cost += mat["buy_cost"]
+
+    return render_template(
+        "chain_shopping.html",
+        bp_id=bp_id, bp_name=bp_name, product_name=product_name,
+        me=me, runs=runs, structure_bonus=structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+        materials=shopping_materials, total_buy_cost=total_buy_cost,
+        summary=summary, buy_param=buy_param,
+        character_name=session.get("character_name"),
+        source=source, has_corp=corporation_id is not None,
+    )
+
+
+@app.route("/api/chain/<int:bp_id>")
+def api_chain(bp_id):
+    """JSON endpoint for chain data."""
+    me = int(request.args.get("me", 10))
+    runs = int(request.args.get("runs", 1))
+    structure_bonus = float(request.args.get("structure_bonus", 0))
+    sub_me = int(request.args.get("sub_me", 10))
+    resolve_reactions = request.args.get("reactions", "1") == "1"
+
+    sde = get_sde()
+    region_id = esi.get_market_region()
+
+    tree = resolve_material_chain(
+        sde, bp_id, me, runs, structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    )
+    raw_materials = flatten_material_tree(tree)
+    summary = get_chain_summary(tree)
+
+    type_ids = list(set(
+        [m["type_id"] for m in raw_materials]
+        + [i["type_id"] for i in summary["intermediates"]]
+    ))
+    prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
+
+    raw_total = 0.0
+    for mat in raw_materials:
+        sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
+        mat["sell_price"] = sell_price
+        mat["line_cost"] = sell_price * mat["quantity"]
+        raw_total += mat["line_cost"]
+
+    return jsonify(
+        tree=_nodes_to_dict(tree),
+        raw_materials=raw_materials,
+        raw_total=raw_total,
+        summary=summary,
+        prices={str(k): v for k, v in prices.items()},
+    )
 
 
 # ------------------------------------------------------------------

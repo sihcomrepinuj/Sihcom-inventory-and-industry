@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}{{ product_name }} — Full Chain{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h2>{{ product_name }} — Full Material Chain</h2>
+    <p>{{ bp_name }}</p>
+</hgroup>
+
+<form method="get" action="/chain/{{ bp_id }}" class="controls">
+    <label>
+        ME
+        <select name="me">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == me %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Runs
+        <input type="number" name="runs" value="{{ runs }}" min="1" style="width:6rem">
+    </label>
+    <label>
+        Structure Bonus %
+        <input type="number" name="structure_bonus" value="{{ structure_bonus }}" min="0" step="0.1" style="width:6rem">
+    </label>
+    <label>
+        Sub-component ME
+        <select name="sub_me">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == sub_me %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        <input type="checkbox" name="reactions" value="1" {% if resolve_reactions %}checked{% endif %}>
+        Resolve reactions
+    </label>
+    <button type="submit">Update</button>
+</form>
+
+<p class="text-muted">
+    Chain depth: {{ summary.max_depth + 1 }} |
+    {{ summary.total_intermediate_types }} intermediate{{ 's' if summary.total_intermediate_types != 1 else '' }} |
+    {{ summary.total_terminal_types }} raw material{{ 's' if summary.total_terminal_types != 1 else '' }}
+</p>
+
+<!-- View toggle -->
+<div role="group" style="margin-bottom:1rem;">
+    <button id="btn-tree" onclick="showView('tree')">Material Tree</button>
+    <button id="btn-flat" class="outline" onclick="showView('flat')">Aggregated Raw Materials</button>
+</div>
+
+<!-- TREE VIEW with build/buy checkboxes -->
+<div id="view-tree">
+    {% for node in tree_data recursive %}
+        {% if node.children %}
+        <details open style="margin-left: {{ node.depth * 1.5 }}rem; margin-bottom: 0.3rem;">
+            <summary>
+                <label style="display:inline; cursor:pointer; margin-bottom:0;">
+                    <input type="checkbox" class="build-toggle"
+                           data-typeid="{{ node.type_id }}"
+                           data-quantity="{{ node.quantity }}"
+                           data-name="{{ node.name }}"
+                           checked
+                           style="margin-right:0.3rem; margin-bottom:0;">
+                    Build
+                </label>
+                <strong>{{ node.quantity | commas }}x</strong>
+                <a href="/market/{{ node.type_id }}">{{ node.name }}</a>
+                <span class="text-muted">({{ node.activity_name }}, ME {{ node.me_level }})</span>
+            </summary>
+            <div class="children-container">
+                {{ loop(node.children) }}
+            </div>
+        </details>
+        {% else %}
+        <div style="margin-left: {{ node.depth * 1.5 }}rem; padding: 0.15rem 0;">
+            <strong>{{ node.quantity | commas }}x</strong>
+            <a href="/market/{{ node.type_id }}">{{ node.name }}</a>
+            <span class="text-muted">(raw)</span>
+        </div>
+        {% endif %}
+    {% endfor %}
+</div>
+
+<!-- FLAT VIEW: Aggregated raw materials -->
+<div id="view-flat" style="display:none;">
+    <table>
+        <thead>
+            <tr>
+                <th>Material</th>
+                <th class="text-right">Total Needed</th>
+                <th class="text-right">Jita Sell</th>
+                <th class="text-right">Total Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for mat in raw_materials %}
+            <tr>
+                <td><a href="/market/{{ mat.type_id }}">{{ mat.name }}</a></td>
+                <td class="text-right">{{ mat.quantity | commas }}</td>
+                <td class="text-right">{{ mat.sell_price | isk }}</td>
+                <td class="text-right">{{ mat.line_cost | isk }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="3" class="text-right grand-total">Total Raw Material Cost</td>
+                <td class="text-right grand-total">{{ raw_total | isk }} ISK</td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<!-- Dynamic shopping table (updates with build/buy checkboxes) -->
+<details open id="shopping-section">
+    <summary><h3 style="display:inline">Shopping List Preview</h3></summary>
+    <table id="shopping-table">
+        <thead>
+            <tr>
+                <th>Material</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Jita Sell</th>
+                <th class="text-right">Est. Cost</th>
+            </tr>
+        </thead>
+        <tbody id="shopping-tbody">
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="3" class="text-right grand-total">Total Est. Cost</td>
+                <td class="text-right grand-total" id="shopping-total">-</td>
+            </tr>
+        </tfoot>
+    </table>
+</details>
+
+<!-- Intermediates buy-vs-build -->
+{% if summary.intermediates %}
+<details>
+    <summary><h3 style="display:inline">Intermediate Components (Buy vs Build)</h3></summary>
+    <table>
+        <thead>
+            <tr>
+                <th>Component</th>
+                <th class="text-right">Qty</th>
+                <th>Activity</th>
+                <th class="text-right">ME</th>
+                <th class="text-right">Buy Price (Jita)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for inter in summary.intermediates %}
+            <tr>
+                <td><a href="/market/{{ inter.type_id }}">{{ inter.name }}</a></td>
+                <td class="text-right">{{ inter.quantity | commas }}</td>
+                <td>{{ inter.activity_name }}</td>
+                <td class="text-right">{{ inter.me_level }}</td>
+                <td class="text-right">{{ inter.buy_cost | isk }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}
+
+<!-- Navigation links -->
+{% if character_name %}
+<p><a href="#" id="chain-shop-link" role="button">Chain Shopping List (check assets)</a></p>
+{% endif %}
+<p><a href="/blueprint/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}">&larr; Back to single-level view</a></p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    // Full tree data from server (JSON)
+    const treeData = {{ tree_data | tojson }};
+    const prices = {{ prices | tojson }};
+
+    // Base URL params for links
+    const baseParams = 'me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}&sub_me={{ sub_me }}&reactions={{ "1" if resolve_reactions else "0" }}';
+
+    function fmtNum(n) { return n.toLocaleString(); }
+    function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+    // Collect type_ids that user wants to BUY (unchecked = buy)
+    function getBuySet() {
+        const buySet = new Set();
+        document.querySelectorAll('.build-toggle').forEach(cb => {
+            if (!cb.checked) {
+                buySet.add(parseInt(cb.dataset.typeid));
+            }
+        });
+        return buySet;
+    }
+
+    // Walk tree and collect shopping items respecting buy_set
+    function collectShoppingItems(nodeList, buySet) {
+        const totals = {};
+        function walk(nodes) {
+            for (const node of nodes) {
+                if (buySet.has(node.type_id)) {
+                    // User wants to buy this — add it directly
+                    if (!totals[node.type_id]) {
+                        totals[node.type_id] = {type_id: node.type_id, name: node.name, quantity: 0};
+                    }
+                    totals[node.type_id].quantity += node.quantity;
+                } else if (node.is_terminal || node.children.length === 0) {
+                    // Terminal raw material
+                    if (!totals[node.type_id]) {
+                        totals[node.type_id] = {type_id: node.type_id, name: node.name, quantity: 0};
+                    }
+                    totals[node.type_id].quantity += node.quantity;
+                } else {
+                    // Intermediate marked as "build" — recurse
+                    walk(node.children);
+                }
+            }
+        }
+        walk(nodeList);
+        return Object.values(totals).sort((a,b) => b.quantity - a.quantity);
+    }
+
+    // Rebuild the shopping table
+    function updateShoppingTable() {
+        const buySet = getBuySet();
+        const items = collectShoppingItems(treeData, buySet);
+
+        const tbody = document.getElementById('shopping-tbody');
+        tbody.innerHTML = '';
+
+        let total = 0;
+        for (const item of items) {
+            const priceData = prices[String(item.type_id)] || prices[item.type_id] || {};
+            const sellPrice = priceData.sell_min || 0;
+            const lineCost = sellPrice * item.quantity;
+            total += lineCost;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                `<td><a href="/market/${item.type_id}">${item.name}</a></td>` +
+                `<td class="text-right">${fmtNum(item.quantity)}</td>` +
+                `<td class="text-right">${fmtIsk(sellPrice)}</td>` +
+                `<td class="text-right">${fmtIsk(lineCost)}</td>`;
+            tbody.appendChild(tr);
+        }
+
+        document.getElementById('shopping-total').textContent = fmtIsk(total) + ' ISK';
+
+        // Update chain shop link with buy_set
+        const shopLink = document.getElementById('chain-shop-link');
+        if (shopLink) {
+            const buyParam = Array.from(buySet).join(',');
+            shopLink.href = `/chain/shopping/{{ bp_id }}?${baseParams}&buy=${buyParam}`;
+        }
+    }
+
+    // Handle checkbox toggles
+    document.querySelectorAll('.build-toggle').forEach(cb => {
+        cb.addEventListener('change', function() {
+            const details = this.closest('details');
+            const childrenContainer = details ? details.querySelector('.children-container') : null;
+
+            if (this.checked) {
+                // Build — show children
+                if (childrenContainer) childrenContainer.style.display = '';
+                this.nextSibling.textContent = ' Build';
+            } else {
+                // Buy — hide children
+                if (childrenContainer) childrenContainer.style.display = 'none';
+                this.nextSibling.textContent = ' Buy';
+            }
+            updateShoppingTable();
+        });
+    });
+
+    // View toggle
+    window.showView = function(view) {
+        document.getElementById('view-tree').style.display = view === 'tree' ? '' : 'none';
+        document.getElementById('view-flat').style.display = view === 'flat' ? '' : 'none';
+        document.getElementById('btn-tree').classList.toggle('outline', view !== 'tree');
+        document.getElementById('btn-flat').classList.toggle('outline', view !== 'flat');
+    };
+
+    // Initial render
+    updateShoppingTable();
+})();
+</script>
+{% endblock %}

@@ -33,6 +33,8 @@ from sde import (
     SDE, ACTIVITY_NAMES, ACTIVITY_MANUFACTURING, ACTIVITY_RESEARCHING_ME,
     ACTIVITY_RESEARCHING_TE, ACTIVITY_COPYING, ACTIVITY_INVENTION,
     ACTIVITY_REACTIONS, calculate_materials, apply_me,
+    resolve_material_chain, flatten_material_tree, get_chain_summary,
+    MaterialNode,
 )
 import esi
 
@@ -303,6 +305,82 @@ def cmd_prices(sde: SDE, args: list[str], region_id: int):
     print(f"  {'Buy volume:':<20} {data['buy_volume']:>18,}")
     print(f"  {'Sell orders:':<20} {data['sell_orders']:>18,}")
     print(f"  {'Buy orders:':<20} {data['buy_orders']:>18,}")
+
+
+def cmd_chain(sde: SDE, args: list[str], structure_bonus: float,
+              region_id: int):
+    if not args:
+        print("Usage: eve_inventory.py chain <name> [me] [runs]")
+        return
+    term = args[0]
+    me = int(args[1]) if len(args) > 1 else 10
+    runs = int(args[2]) if len(args) > 2 else 1
+
+    bp = pick_blueprint(sde, term)
+    if not bp:
+        return
+
+    bp_id = bp["blueprint_type_id"]
+    print(f"\n{'='*90}")
+    print("FULL MATERIAL CHAIN")
+    print(f"{'='*90}")
+    print(f"\n  Blueprint: {bp['blueprint_name']}")
+    print(f"  Product:   {bp['product_name']}")
+    print(f"  ME Level:  {me} (sub-components: ME 10)")
+    print(f"  Runs:      {runs}")
+    if structure_bonus > 0:
+        print(f"  Structure: -{structure_bonus}% materials")
+
+    print("\n  Resolving material chain...")
+    tree = resolve_material_chain(
+        sde, bp_id, me, runs, structure_bonus,
+        sub_me=10, resolve_reactions=True,
+    )
+    summary = get_chain_summary(tree)
+
+    # Print tree
+    print(f"\n  --- Material Tree ---")
+    print(f"  (depth: {summary['max_depth'] + 1}, "
+          f"{summary['total_intermediate_types']} intermediates, "
+          f"{summary['total_terminal_types']} raw materials)\n")
+
+    def print_tree(nodes: list[MaterialNode], indent: int = 2):
+        for node in nodes:
+            prefix = " " * indent
+            if node.children:
+                label = f"({node.activity_name}, ME {node.me_level})"
+                print(f"{prefix}{node.quantity_needed:>10,}x  {node.name:<35} {label}")
+                print_tree(node.children, indent + 4)
+            else:
+                print(f"{prefix}{node.quantity_needed:>10,}x  {node.name}")
+
+    print_tree(tree)
+
+    # Aggregated raw materials with prices
+    raw_materials = flatten_material_tree(tree)
+
+    print(f"\n  Fetching market prices...")
+    type_ids = [m["type_id"] for m in raw_materials]
+    prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
+
+    hdr = f"{'Material':<35} {'Total Needed':>14} {'Jita Sell':>14} {'Total Cost':>16}"
+    print(f"\n  --- Aggregated Raw Materials ---\n")
+    print(f"  {hdr}")
+    print(f"  {'-'*35} {'-'*14} {'-'*14} {'-'*16}")
+
+    grand_total = 0.0
+    for mat in raw_materials:
+        sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
+        line_cost = sell_price * mat["quantity"]
+        grand_total += line_cost
+        print(
+            f"  {mat['name']:<35} "
+            f"{mat['quantity']:>14,} "
+            f"{fmt_isk(sell_price):>14} "
+            f"{fmt_isk(line_cost):>16}"
+        )
+
+    print(f"\n  {'Total raw material cost:':>65} {fmt_isk(grand_total):>16} ISK")
 
 
 # ------------------------------------------------------------------
@@ -626,6 +704,7 @@ SDE-only commands (no auth needed):
   detail <name>                    Full blueprint info
   mecomp <name> [runs]             ME 0-10 comparison table
   prices <name>                    Market prices (buy/sell/volume)
+  chain <name> [me] [runs]         Full material chain (resolve subcomponents)
 
 ESI commands (require auth):
   auth                             SSO authentication
@@ -642,6 +721,7 @@ Environment:
 Examples:
   python eve_inventory.py materials "Antimatter Charge M" 10 100
   python eve_inventory.py prices tritanium
+  python eve_inventory.py chain "Heavy Pulse Laser II" 10 1
   python eve_inventory.py shop drake 10 5
   python eve_inventory.py mecomp revelation
   python eve_inventory.py summary
@@ -664,7 +744,7 @@ def main():
         return
 
     # SDE-only commands (no authentication needed)
-    sde_commands = {"search", "materials", "detail", "mecomp", "prices"}
+    sde_commands = {"search", "materials", "detail", "mecomp", "prices", "chain"}
     if command in sde_commands:
         with SDE() as sde:
             if command == "search":
@@ -677,6 +757,8 @@ def main():
                 cmd_mecomp(sde, args, structure_bonus)
             elif command == "prices":
                 cmd_prices(sde, args, region_id)
+            elif command == "chain":
+                cmd_chain(sde, args, structure_bonus, region_id)
         return
 
     # Authenticated commands (need both SDE and ESI)

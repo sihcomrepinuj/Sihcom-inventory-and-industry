@@ -16,6 +16,7 @@ import math
 import os
 import sqlite3
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 # Industry activity IDs
 ACTIVITY_MANUFACTURING = 1
@@ -230,6 +231,34 @@ class SDE:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # ------------------------------------------------------------------
+    # Chain resolution helpers
+    # ------------------------------------------------------------------
+
+    def find_source_for_material(self, type_id: int) -> dict | None:
+        """
+        Check if a material can be produced (manufactured or reacted).
+
+        Checks manufacturing (activityID=1) first, then reactions (activityID=9).
+
+        Returns dict with keys:
+            blueprint_type_id, activity_id, quantity_per_run
+        or None if this is a terminal (raw) material.
+        """
+        for activity_id in (ACTIVITY_MANUFACTURING, ACTIVITY_REACTIONS):
+            row = self.conn.execute(
+                "SELECT typeID, quantity FROM industryActivityProducts "
+                "WHERE productTypeID = ? AND activityID = ?",
+                (type_id, activity_id),
+            ).fetchone()
+            if row:
+                return {
+                    "blueprint_type_id": row["typeID"],
+                    "activity_id": activity_id,
+                    "quantity_per_run": row["quantity"],
+                }
+        return None
+
 
 # ------------------------------------------------------------------
 # ME Calculation helpers
@@ -298,3 +327,237 @@ def calculate_materials(
             "saved": base_total - adjusted,
         })
     return results
+
+
+# ------------------------------------------------------------------
+# Material chain resolution
+# ------------------------------------------------------------------
+
+@dataclass
+class MaterialNode:
+    """A single node in a material dependency tree."""
+    type_id: int
+    name: str
+    quantity_needed: int            # ME-adjusted total quantity
+    activity_id: int | None         # 1=manufacturing, 9=reaction, None=raw
+    activity_name: str | None
+    blueprint_type_id: int | None   # BP/formula that makes this, None for raw
+    me_level: int
+    is_terminal: bool               # True = no blueprint exists (raw material)
+    depth: int
+    children: list['MaterialNode'] = field(default_factory=list)
+
+
+def resolve_material_chain(
+    sde: SDE,
+    blueprint_type_id: int,
+    me_level: int = 0,
+    runs: int = 1,
+    structure_bonus: float = 0.0,
+    sub_me: int = 10,
+    resolve_reactions: bool = True,
+    max_depth: int = 10,
+    _depth: int = 0,
+    _cache: dict | None = None,
+) -> list[MaterialNode]:
+    """
+    Recursively resolve the full material chain for a blueprint.
+
+    Always resolves the complete tree. Build/buy decisions are made
+    client-side or via flatten_material_tree(buy_set=...).
+
+    Args:
+        sde:               SDE instance
+        blueprint_type_id: Blueprint type ID to resolve
+        me_level:          ME for this specific blueprint
+        runs:              Number of runs
+        structure_bonus:   Structure material reduction %
+        sub_me:            Default ME for sub-component blueprints (default 10)
+        resolve_reactions: Whether to recurse into reactions (activityID=9)
+        max_depth:         Safety limit for recursion depth
+    """
+    if _cache is None:
+        _cache = {}
+
+    if _depth > max_depth:
+        # Safety: return remaining materials as terminal
+        base_mats = sde.get_manufacturing_materials(blueprint_type_id)
+        return [
+            MaterialNode(
+                type_id=m["type_id"], name=m["name"],
+                quantity_needed=apply_me(m["quantity"], me_level, runs, structure_bonus),
+                activity_id=None, activity_name=None,
+                blueprint_type_id=None, me_level=me_level,
+                is_terminal=True, depth=_depth,
+            )
+            for m in base_mats
+        ]
+
+    # Determine what activity this blueprint uses and get its materials
+    # Check if the blueprint has reaction materials (activityID=9)
+    reaction_mats = sde.get_activity_materials(blueprint_type_id, ACTIVITY_REACTIONS)
+    if reaction_mats:
+        # This is a reaction formula — no ME applies
+        adjusted_mats = [
+            {"type_id": m["type_id"], "name": m["name"],
+             "adjusted_quantity": m["quantity"] * runs}
+            for m in reaction_mats
+        ]
+    else:
+        # Standard manufacturing blueprint — ME applies
+        base_mats = sde.get_manufacturing_materials(blueprint_type_id)
+        adjusted_mats = [
+            {"type_id": m["type_id"], "name": m["name"],
+             "adjusted_quantity": apply_me(m["quantity"], me_level, runs, structure_bonus)}
+            for m in base_mats
+        ]
+
+    nodes = []
+    for mat in adjusted_mats:
+        tid = mat["type_id"]
+        qty = mat["adjusted_quantity"]
+
+        # Memoized source lookup
+        if tid not in _cache:
+            _cache[tid] = sde.find_source_for_material(tid)
+        source = _cache[tid]
+
+        if source is None:
+            # Terminal raw material
+            nodes.append(MaterialNode(
+                type_id=tid, name=mat["name"],
+                quantity_needed=qty,
+                activity_id=None, activity_name=None,
+                blueprint_type_id=None, me_level=0,
+                is_terminal=True, depth=_depth,
+            ))
+        elif source["activity_id"] == ACTIVITY_REACTIONS and not resolve_reactions:
+            # Reaction product but user chose not to resolve reactions
+            nodes.append(MaterialNode(
+                type_id=tid, name=mat["name"],
+                quantity_needed=qty,
+                activity_id=ACTIVITY_REACTIONS,
+                activity_name="Reactions",
+                blueprint_type_id=source["blueprint_type_id"],
+                me_level=0, is_terminal=True, depth=_depth,
+            ))
+        else:
+            # Resolvable component — recurse
+            sub_activity = source["activity_id"]
+            sub_bp = source["blueprint_type_id"]
+            qty_per_run = source["quantity_per_run"]
+
+            # How many runs of the sub-blueprint do we need?
+            sub_runs = math.ceil(qty / qty_per_run)
+
+            # Reactions have no ME; manufactured subs use sub_me
+            effective_me = 0 if sub_activity == ACTIVITY_REACTIONS else sub_me
+
+            children = resolve_material_chain(
+                sde, sub_bp,
+                me_level=effective_me,
+                runs=sub_runs,
+                structure_bonus=structure_bonus,
+                sub_me=sub_me,
+                resolve_reactions=resolve_reactions,
+                max_depth=max_depth,
+                _depth=_depth + 1,
+                _cache=_cache,
+            )
+
+            nodes.append(MaterialNode(
+                type_id=tid, name=mat["name"],
+                quantity_needed=qty,
+                activity_id=sub_activity,
+                activity_name=ACTIVITY_NAMES.get(sub_activity, "Unknown"),
+                blueprint_type_id=sub_bp,
+                me_level=effective_me,
+                is_terminal=False, depth=_depth,
+                children=children,
+            ))
+
+    return nodes
+
+
+def flatten_material_tree(
+    nodes: list[MaterialNode],
+    buy_set: set[int] | None = None,
+) -> list[dict]:
+    """
+    Flatten a material tree into an aggregated shopping list.
+
+    Args:
+        nodes:   The material tree from resolve_material_chain()
+        buy_set: Optional set of type_ids to BUY instead of build.
+                 If a node's type_id is in buy_set, it's treated as a leaf
+                 (the node itself goes on the list, not its children).
+                 If None, resolves everything to terminal raw materials.
+
+    Returns:
+        List of {type_id, name, quantity} dicts, sorted by quantity desc.
+    """
+    totals: dict[int, dict] = {}
+
+    def _walk(node_list: list[MaterialNode]):
+        for node in node_list:
+            # If this node is in the buy set, treat it as a leaf
+            if buy_set is not None and node.type_id in buy_set:
+                if node.type_id not in totals:
+                    totals[node.type_id] = {
+                        "type_id": node.type_id,
+                        "name": node.name,
+                        "quantity": 0,
+                    }
+                totals[node.type_id]["quantity"] += node.quantity_needed
+            elif node.is_terminal or not node.children:
+                # Terminal raw material
+                if node.type_id not in totals:
+                    totals[node.type_id] = {
+                        "type_id": node.type_id,
+                        "name": node.name,
+                        "quantity": 0,
+                    }
+                totals[node.type_id]["quantity"] += node.quantity_needed
+            else:
+                # Intermediate — recurse into children
+                _walk(node.children)
+
+    _walk(nodes)
+    return sorted(totals.values(), key=lambda x: x["quantity"], reverse=True)
+
+
+def get_chain_summary(nodes: list[MaterialNode]) -> dict:
+    """
+    Get summary statistics for a material chain.
+
+    Returns dict with:
+        max_depth, total_intermediate_types, total_terminal_types,
+        intermediates: [{type_id, name, quantity, activity_name, me_level}]
+    """
+    intermediates = []
+    terminal_ids = set()
+    max_depth = 0
+
+    def _walk(node_list: list[MaterialNode]):
+        nonlocal max_depth
+        for node in node_list:
+            max_depth = max(max_depth, node.depth)
+            if node.is_terminal or not node.children:
+                terminal_ids.add(node.type_id)
+            else:
+                intermediates.append({
+                    "type_id": node.type_id,
+                    "name": node.name,
+                    "quantity": node.quantity_needed,
+                    "activity_name": node.activity_name,
+                    "me_level": node.me_level,
+                })
+                _walk(node.children)
+
+    _walk(nodes)
+    return {
+        "max_depth": max_depth,
+        "total_intermediate_types": len(intermediates),
+        "total_terminal_types": len(terminal_ids),
+        "intermediates": intermediates,
+    }
