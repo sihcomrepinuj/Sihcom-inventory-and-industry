@@ -259,6 +259,66 @@ class SDE:
                 }
         return None
 
+    def get_materials_by_type_ids(self, type_ids: list[int]) -> dict[int, dict | None]:
+        """
+        Batch version of find_source_for_material for multiple type IDs.
+
+        Reduces database queries by fetching all material sources in a single
+        round trip instead of querying each material individually.
+
+        Args:
+            type_ids: List of material type IDs to look up
+
+        Returns:
+            Dict mapping type_id -> source info (same format as find_source_for_material)
+            or None if the material has no blueprint/reaction formula.
+        """
+        if not type_ids:
+            return {}
+
+        # Initialize all type_ids as having no source (terminal materials)
+        result = {tid: None for tid in type_ids}
+
+        # Batch query for manufacturing sources (activityID=1)
+        placeholders = ",".join("?" * len(type_ids))
+        mfg_rows = self.conn.execute(
+            f"""
+            SELECT productTypeID, typeID, quantity
+            FROM industryActivityProducts
+            WHERE productTypeID IN ({placeholders}) AND activityID = 1
+            """,
+            type_ids,
+        ).fetchall()
+
+        for row in mfg_rows:
+            result[row["productTypeID"]] = {
+                "blueprint_type_id": row["typeID"],
+                "activity_id": ACTIVITY_MANUFACTURING,
+                "quantity_per_run": row["quantity"],
+            }
+
+        # Batch query for reaction sources (activityID=9) - only for materials not yet found
+        remaining_ids = [tid for tid in type_ids if result[tid] is None]
+        if remaining_ids:
+            placeholders = ",".join("?" * len(remaining_ids))
+            reaction_rows = self.conn.execute(
+                f"""
+                SELECT productTypeID, typeID, quantity
+                FROM industryActivityProducts
+                WHERE productTypeID IN ({placeholders}) AND activityID = 9
+                """,
+                remaining_ids,
+            ).fetchall()
+
+            for row in reaction_rows:
+                result[row["productTypeID"]] = {
+                    "blueprint_type_id": row["typeID"],
+                    "activity_id": ACTIVITY_REACTIONS,
+                    "quantity_per_run": row["quantity"],
+                }
+
+        return result
+
 
 # ------------------------------------------------------------------
 # ME Calculation helpers
@@ -413,13 +473,17 @@ def resolve_material_chain(
         ]
 
     nodes = []
+    # Pre fetch materials list for all type ids in the blueprint to minimize DB hits in the loop
+    type_ids = [mat["type_id"] for mat in adjusted_mats]
+    pre_fetched_materials = sde.get_materials_by_type_ids(type_ids)
+
     for mat in adjusted_mats:
         tid = mat["type_id"]
         qty = mat["adjusted_quantity"]
 
         # Memoized source lookup
         if tid not in _cache:
-            _cache[tid] = sde.find_source_for_material(tid)
+            _cache[tid] = pre_fetched_materials[tid]
         source = _cache[tid]
 
         if source is None:
