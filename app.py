@@ -98,10 +98,9 @@ def ensure_sde_downloaded():
             logger.warning("SDE file is corrupt — deleting and re-downloading...")
             os.remove(DEFAULT_SDE_PATH)
 
-    logger.info("Downloading SDE (this may take a few minutes)...")
-    from setup_sde import download_sde, decompress_sde
-    download_sde()
-    decompress_sde()
+    logger.info("Downloading SDE (~2 MB from Fuzzwork CSVs)...")
+    from setup_sde import build_database
+    build_database()
     logger.info("SDE ready.")
 
 
