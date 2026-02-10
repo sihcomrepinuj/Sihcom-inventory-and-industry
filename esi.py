@@ -399,7 +399,7 @@ _price_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 
 # {entity_id: (timestamp, asset_index)}
 _asset_cache: dict[int, tuple[float, dict[int, int]]] = {}
-ASSET_CACHE_TTL = 120  # 2 minutes
+ASSET_CACHE_TTL = 600  # 10 minutes (assets change infrequently)
 
 
 def fetch_market_orders(
@@ -516,7 +516,8 @@ def get_cached_asset_index(
     """
     Fetch and cache asset index for a character or corporation.
 
-    Cached for ASSET_CACHE_TTL seconds (default 2 min).
+    Cached for ASSET_CACHE_TTL seconds (default 10 min).
+    Returns cached data if available, otherwise fetches from ESI.
     """
     now = _time.monotonic()
 
@@ -533,3 +534,21 @@ def get_cached_asset_index(
     index = build_asset_index(assets)
     _asset_cache[entity_id] = (now, index)
     return index
+
+
+def prefetch_asset_index(
+    p: Preston,
+    entity_id: int,
+    is_corp: bool = False,
+) -> None:
+    """
+    Proactively fetch and cache assets in the background.
+
+    Call this after login to warm up the cache before the user
+    navigates to shopping lists.
+    """
+    try:
+        get_cached_asset_index(p, entity_id, is_corp)
+    except Exception:
+        # Silently fail - assets will be fetched on demand if prefetch fails
+        pass

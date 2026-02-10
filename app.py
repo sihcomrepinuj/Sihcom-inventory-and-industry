@@ -539,6 +539,12 @@ def callback():
         if corp_id:
             session["corporation_id"] = corp_id
 
+        # Prefetch assets in background to warm up the cache
+        # This makes the first shopping list load instant
+        if corp_id:
+            esi.prefetch_asset_index(authed, corp_id, is_corp=True)
+        esi.prefetch_asset_index(authed, info["character_id"], is_corp=False)
+
         flash(f"Logged in as {session['character_name']}")
     except Exception as e:
         flash(f"Authentication error: {e}")
