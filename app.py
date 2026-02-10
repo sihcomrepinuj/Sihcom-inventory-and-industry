@@ -8,6 +8,7 @@ Deployable to Railway with gunicorn.
 import logging
 import os
 import secrets
+import time
 import traceback
 from functools import wraps
 
@@ -32,6 +33,28 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # Log errors to stdout so Railway can capture them
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------
+# Chain tree cache (SDE data is static, cache permanently per params)
+# ------------------------------------------------------------------
+_chain_cache: dict[tuple, tuple[list, list, dict]] = {}  # key -> (tree, raw, summary)
+
+
+def get_cached_chain(sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reactions):
+    """Cache chain resolution — SDE data never changes within a session."""
+    key = (bp_id, me, runs, structure_bonus, sub_me, resolve_reactions)
+    if key in _chain_cache:
+        return _chain_cache[key]
+
+    tree = resolve_material_chain(
+        sde, bp_id, me, runs, structure_bonus,
+        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    )
+    raw_materials = flatten_material_tree(tree)
+    summary = get_chain_summary(tree)
+
+    _chain_cache[key] = (tree, raw_materials, summary)
+    return tree, raw_materials, summary
 
 
 @app.errorhandler(Exception)
@@ -326,17 +349,10 @@ def chain(bp_id):
     product_id = sde.find_product_for_blueprint(bp_id)
     product_name = sde.get_type_name(product_id) if product_id else bp_name
 
-    # Resolve the full chain
-    tree = resolve_material_chain(
-        sde, bp_id, me, runs, structure_bonus,
-        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    # Resolve the full chain (cached)
+    tree, raw_materials, summary = get_cached_chain(
+        sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reactions,
     )
-
-    # Flatten to raw materials (default — all resolved)
-    raw_materials = flatten_material_tree(tree)
-
-    # Summary stats
-    summary = get_chain_summary(tree)
 
     # Price everything: intermediates + raw materials
     all_type_ids = list(set(
@@ -401,16 +417,14 @@ def chain_shopping(bp_id):
     product_id = sde.find_product_for_blueprint(bp_id)
     product_name = sde.get_type_name(product_id) if product_id else bp_name
 
-    tree = resolve_material_chain(
-        sde, bp_id, me, runs, structure_bonus,
-        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    tree, _, summary = get_cached_chain(
+        sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reactions,
     )
 
     # Flatten with buy_set to get the final shopping list
     shopping_materials = flatten_material_tree(tree, buy_set=buy_set)
-    summary = get_chain_summary(tree)
 
-    # Fetch assets
+    # Fetch assets (cached)
     p = get_authed_preston_from_session()
     if not p:
         flash("Session expired. Please log in again.")
@@ -420,12 +434,11 @@ def chain_shopping(bp_id):
     corporation_id = session.get("corporation_id")
 
     if source == "corp" and corporation_id:
-        assets = esi.fetch_corp_assets(p, corporation_id)
+        asset_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
     else:
-        assets = esi.fetch_assets(p, character_id)
+        asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
         source = "personal"
 
-    asset_index = esi.build_asset_index(assets)
     session["refresh_token"] = p.refresh_token
 
     # Calculate deficits and costs
@@ -465,12 +478,9 @@ def api_chain(bp_id):
     sde = get_sde()
     region_id = esi.get_market_region()
 
-    tree = resolve_material_chain(
-        sde, bp_id, me, runs, structure_bonus,
-        sub_me=sub_me, resolve_reactions=resolve_reactions,
+    tree, raw_materials, summary = get_cached_chain(
+        sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reactions,
     )
-    raw_materials = flatten_material_tree(tree)
-    summary = get_chain_summary(tree)
 
     type_ids = list(set(
         [m["type_id"] for m in raw_materials]
@@ -572,14 +582,12 @@ def shopping(bp_id):
     character_id = int(session["character_id"])
     corporation_id = session.get("corporation_id")
 
-    # Fetch assets based on source toggle (corp by default)
+    # Fetch assets based on source toggle (corp by default, cached)
     if source == "corp" and corporation_id:
-        assets = esi.fetch_corp_assets(p, corporation_id)
+        asset_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
     else:
-        assets = esi.fetch_assets(p, character_id)
+        asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
         source = "personal"  # normalize if corp was unavailable
-
-    asset_index = esi.build_asset_index(assets)
 
     # Update session refresh token in case Preston rotated it
     session["refresh_token"] = p.refresh_token

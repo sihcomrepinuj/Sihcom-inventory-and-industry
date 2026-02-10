@@ -85,9 +85,9 @@
 </details>
 {% endif %}
 
-<p><a href="/chain/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" class="outline">Full Material Chain</a></p>
+<p><a href="/chain/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" class="outline" id="chain-link">Full Material Chain</a></p>
 {% if character_name %}
-<p><a href="/shopping/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button">Shopping List (check assets)</a></p>
+<p><a href="/shopping/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" id="shopping-link">Shopping List (check assets)</a></p>
 {% endif %}
 {% endblock %}
 
@@ -116,11 +116,24 @@
     function fmtNum(n) { return n.toLocaleString(); }
     function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
 
+    function updateLinks() {
+        const me = meSelect.value;
+        const runs = runsInput.value || 1;
+        const sb = structInput.value || 0;
+        const params = `me=${me}&runs=${runs}&structure_bonus=${sb}`;
+        const chainLink = document.getElementById('chain-link');
+        const shopLink = document.getElementById('shopping-link');
+        if (chainLink) chainLink.href = `/chain/${bpId}?${params}`;
+        if (shopLink) shopLink.href = `/shopping/${bpId}?${params}`;
+    }
+
     function fetchMaterials() {
         const me = meSelect.value;
         const runs = runsInput.value || 1;
         const sb = structInput.value || 0;
         const url = `/api/materials/${bpId}?me=${me}&runs=${runs}&structure_bonus=${sb}`;
+
+        updateLinks();
 
         fetch(url)
             .then(r => r.json())

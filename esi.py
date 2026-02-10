@@ -387,10 +387,19 @@ def get_market_region() -> int:
 
 
 # ------------------------------------------------------------------
-# Market data
+# Market data (with TTL cache)
 # ------------------------------------------------------------------
 
-_price_cache: dict[tuple[int, int], dict] = {}
+import time as _time
+
+PRICE_CACHE_TTL = 300  # 5 minutes
+
+# {(region_id, type_id): (timestamp, data)}
+_price_cache: dict[tuple[int, int], tuple[float, dict]] = {}
+
+# {entity_id: (timestamp, asset_index)}
+_asset_cache: dict[int, tuple[float, dict[int, int]]] = {}
+ASSET_CACHE_TTL = 120  # 2 minutes
 
 
 def fetch_market_orders(
@@ -426,13 +435,19 @@ def get_type_market_data(
     """
     Get aggregated market data for a type in a region.
 
+    Cached for PRICE_CACHE_TTL seconds (default 5 min).
+
     Returns dict with keys:
         sell_min, sell_volume, sell_orders,
         buy_max, buy_volume, buy_orders
     """
     key = (region_id, type_id)
+    now = _time.monotonic()
+
     if key in _price_cache:
-        return _price_cache[key]
+        ts, data = _price_cache[key]
+        if now - ts < PRICE_CACHE_TTL:
+            return data
 
     orders = fetch_market_orders(type_id, region_id)
 
@@ -448,7 +463,7 @@ def get_type_market_data(
         "buy_orders": len(buy_orders),
     }
 
-    _price_cache[key] = result
+    _price_cache[key] = (now, result)
     return result
 
 
@@ -456,8 +471,65 @@ def get_bulk_market_data(
     type_ids: list[int],
     region_id: int = DEFAULT_REGION,
 ) -> dict[int, dict]:
-    """Get market data for multiple types. Uses session cache to avoid re-fetching."""
+    """Get market data for multiple types. Fetches uncached types concurrently."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     results = {}
+    now = _time.monotonic()
+
+    # Separate cached vs uncached
+    uncached_ids = []
     for tid in type_ids:
-        results[tid] = get_type_market_data(tid, region_id)
+        key = (region_id, tid)
+        if key in _price_cache:
+            ts, data = _price_cache[key]
+            if now - ts < PRICE_CACHE_TTL:
+                results[tid] = data
+                continue
+        uncached_ids.append(tid)
+
+    # Fetch uncached in parallel (up to 10 concurrent)
+    if uncached_ids:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {
+                executor.submit(get_type_market_data, tid, region_id): tid
+                for tid in uncached_ids
+            }
+            for future in as_completed(futures):
+                tid = futures[future]
+                try:
+                    results[tid] = future.result()
+                except Exception:
+                    results[tid] = {
+                        "sell_min": 0.0, "sell_volume": 0, "sell_orders": 0,
+                        "buy_max": 0.0, "buy_volume": 0, "buy_orders": 0,
+                    }
+
     return results
+
+
+def get_cached_asset_index(
+    p: Preston,
+    entity_id: int,
+    is_corp: bool = False,
+) -> dict[int, int]:
+    """
+    Fetch and cache asset index for a character or corporation.
+
+    Cached for ASSET_CACHE_TTL seconds (default 2 min).
+    """
+    now = _time.monotonic()
+
+    if entity_id in _asset_cache:
+        ts, index = _asset_cache[entity_id]
+        if now - ts < ASSET_CACHE_TTL:
+            return index
+
+    if is_corp:
+        assets = fetch_corp_assets(p, entity_id)
+    else:
+        assets = fetch_assets(p, entity_id)
+
+    index = build_asset_index(assets)
+    _asset_cache[entity_id] = (now, index)
+    return index
