@@ -25,10 +25,13 @@ SCOPES = " ".join([
     "esi-industry.read_character_jobs.v1",
     "esi-markets.structure_markets.v1",
     "esi-universe.read_structures.v1",
-    "esi-characters.read_corporation_roles.v1",
     "esi-assets.read_corporation_assets.v1",
     "esi-corporations.read_blueprints.v1",
     "esi-industry.read_corporation_jobs.v1",
+    "esi-markets.read_character_orders.v1",
+    "esi-markets.read_corporation_orders.v1",
+    "esi-industry.read_character_mining.v1",
+    "esi-industry.read_corporation_mining.v1",
 ])
 
 CONFIG_FILE = "config.json"
