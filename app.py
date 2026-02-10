@@ -75,12 +75,15 @@ def get_sde() -> SDE:
 def ensure_sde_downloaded():
     """Download the SDE if it doesn't exist yet."""
     from sde import DEFAULT_SDE_PATH
+    logger.info(f"Checking for SDE at: {DEFAULT_SDE_PATH}")
     if not os.path.exists(DEFAULT_SDE_PATH):
-        print("SDE not found — downloading...")
+        logger.info("SDE not found — downloading (this may take a few minutes)...")
         from setup_sde import download_sde, decompress_sde
         download_sde()
         decompress_sde()
-        print("SDE ready.")
+        logger.info("SDE ready.")
+    else:
+        logger.info("SDE found.")
 
 
 # ------------------------------------------------------------------
