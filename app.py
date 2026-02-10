@@ -316,6 +316,11 @@ def callback():
         session["character_id"] = info.get("character_id")
         session["character_name"] = info.get("character_name", "Unknown")
 
+        # Fetch and cache corporation ID
+        corp_id = esi.get_corporation_id(authed, info["character_id"])
+        if corp_id:
+            session["corporation_id"] = corp_id
+
         flash(f"Logged in as {session['character_name']}")
     except Exception as e:
         flash(f"Authentication error: {e}")
@@ -340,6 +345,7 @@ def shopping(bp_id):
     me = int(request.args.get("me", 10))
     runs = int(request.args.get("runs", 1))
     structure_bonus = float(request.args.get("structure_bonus", 0))
+    source = request.args.get("source", "corp")  # default to corp assets
 
     sde = get_sde()
     region_id = esi.get_market_region()
@@ -356,7 +362,15 @@ def shopping(bp_id):
         return redirect(url_for("login"))
 
     character_id = int(session["character_id"])
-    assets = esi.fetch_assets(p, character_id)
+    corporation_id = session.get("corporation_id")
+
+    # Fetch assets based on source toggle (corp by default)
+    if source == "corp" and corporation_id:
+        assets = esi.fetch_corp_assets(p, corporation_id)
+    else:
+        assets = esi.fetch_assets(p, character_id)
+        source = "personal"  # normalize if corp was unavailable
+
     asset_index = esi.build_asset_index(assets)
 
     # Update session refresh token in case Preston rotated it
@@ -380,6 +394,8 @@ def shopping(bp_id):
         me=me, runs=runs, structure_bonus=structure_bonus,
         materials=materials, total_buy_cost=total_buy_cost,
         character_name=session.get("character_name"),
+        source=source,
+        has_corp=corporation_id is not None,
     )
 
 

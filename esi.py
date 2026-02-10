@@ -22,6 +22,7 @@ from preston import Preston
 SCOPES = " ".join([
     "esi-assets.read_assets.v1",
     "esi-characters.read_blueprints.v1",
+    "esi-characters.read_corporation_roles.v1",
     "esi-industry.read_character_jobs.v1",
     "esi-markets.structure_markets.v1",
     "esi-universe.read_structures.v1",
@@ -233,6 +234,91 @@ def fetch_industry_jobs(
         return result if result else []
     except Exception as e:
         print(f"Error fetching industry jobs: {e}")
+        return []
+
+
+# ------------------------------------------------------------------
+# Corporation info
+# ------------------------------------------------------------------
+
+def get_corporation_id(p: Preston, character_id: int) -> int | None:
+    """Get the corporation ID for a character."""
+    try:
+        info = p.get_op(
+            "get_characters_character_id", character_id=character_id
+        )
+        return info.get("corporation_id")
+    except Exception as e:
+        print(f"Error fetching corporation ID: {e}")
+        return None
+
+
+# ------------------------------------------------------------------
+# Corporation assets
+# ------------------------------------------------------------------
+
+def fetch_corp_assets(p: Preston, corporation_id: int) -> list[dict]:
+    """Fetch all corporation assets (paginated)."""
+    all_assets = []
+    page = 1
+    while True:
+        try:
+            result = p.get_op(
+                "get_corporations_corporation_id_assets",
+                corporation_id=corporation_id,
+                page=page,
+            )
+            if not result:
+                break
+            all_assets.extend(result)
+            page += 1
+        except Exception:
+            break
+    return all_assets
+
+
+# ------------------------------------------------------------------
+# Corporation blueprints
+# ------------------------------------------------------------------
+
+def fetch_corp_blueprints(p: Preston, corporation_id: int) -> list[dict]:
+    """Fetch all corporation blueprints (paginated)."""
+    all_bps = []
+    page = 1
+    while True:
+        try:
+            result = p.get_op(
+                "get_corporations_corporation_id_blueprints",
+                corporation_id=corporation_id,
+                page=page,
+            )
+            if not result:
+                break
+            all_bps.extend(result)
+            page += 1
+        except Exception:
+            break
+    return all_bps
+
+
+# ------------------------------------------------------------------
+# Corporation industry jobs
+# ------------------------------------------------------------------
+
+def fetch_corp_industry_jobs(
+    p: Preston, corporation_id: int, include_completed: bool = False
+) -> list[dict]:
+    """Fetch corporation industry jobs."""
+    kwargs: dict = {"corporation_id": corporation_id}
+    if include_completed:
+        kwargs["include_completed"] = True
+    try:
+        result = p.get_op(
+            "get_corporations_corporation_id_industry_jobs", **kwargs
+        )
+        return result if result else []
+    except Exception as e:
+        print(f"Error fetching corp industry jobs: {e}")
         return []
 
 
