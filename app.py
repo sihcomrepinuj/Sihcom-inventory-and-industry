@@ -72,18 +72,37 @@ def get_sde() -> SDE:
     return _sde
 
 
+def _sde_is_valid(path: str) -> bool:
+    """Quick sanity check that the SDE database is usable."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(path)
+        count = conn.execute("SELECT COUNT(*) FROM invTypes").fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception as e:
+        logger.warning(f"SDE validation failed: {e}")
+        return False
+
+
 def ensure_sde_downloaded():
-    """Download the SDE if it doesn't exist yet."""
+    """Download the SDE if it doesn't exist or is corrupt."""
     from sde import DEFAULT_SDE_PATH
     logger.info(f"Checking for SDE at: {DEFAULT_SDE_PATH}")
-    if not os.path.exists(DEFAULT_SDE_PATH):
-        logger.info("SDE not found — downloading (this may take a few minutes)...")
-        from setup_sde import download_sde, decompress_sde
-        download_sde()
-        decompress_sde()
-        logger.info("SDE ready.")
-    else:
-        logger.info("SDE found.")
+
+    if os.path.exists(DEFAULT_SDE_PATH):
+        if _sde_is_valid(DEFAULT_SDE_PATH):
+            logger.info("SDE found and valid.")
+            return
+        else:
+            logger.warning("SDE file is corrupt — deleting and re-downloading...")
+            os.remove(DEFAULT_SDE_PATH)
+
+    logger.info("Downloading SDE (this may take a few minutes)...")
+    from setup_sde import download_sde, decompress_sde
+    download_sde()
+    decompress_sde()
+    logger.info("SDE ready.")
 
 
 # ------------------------------------------------------------------
