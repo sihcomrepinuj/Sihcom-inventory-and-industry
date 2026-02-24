@@ -120,6 +120,8 @@ tests/              pytest test suite
 
 6. **Profit cost split**: Owned materials are costed at a configurable % of Jita sell (`MATERIAL_COST_PCT`), so you can model "I bought these at 90% Jita". Materials you don't have are costed at full Jita sell. Revenue shows both sell order (broker + tax) and instant sell (tax only) scenarios.
 
+7. **Location-aware hauling**: Raw asset caching (`_raw_asset_cache`) stores the full ESI asset list, then builds either flat (`{type_id: qty}`) or location-aware (`{type_id: {location_id: qty}}`) indexes on demand. Build stations are detected from industry jobs (manufacturing + reactions, ranked by frequency). The deficit calculator (`hauling.py`) is a pure function with no ESI/SDE dependencies, making it easy to test.
+
 ## ESI Scopes Used
 
 ```
@@ -132,6 +134,8 @@ esi-characters.read_corporation_roles.v1
 esi-assets.read_corporation_assets.v1
 esi-corporations.read_blueprints.v1
 esi-industry.read_corporation_jobs.v1
+esi-markets.read_character_orders.v1
+esi-markets.read_corporation_orders.v1
 ```
 
 Corp-level scopes are included and corp asset lookups are implemented (used by shopping lists and profit analysis with source toggle).
@@ -182,17 +186,50 @@ margin = profit / revenue * 100
 isk_hr = profit / (base_time_seconds / 3600 * runs)
 ```
 
+## Test Suite
+
+32 tests across 3 test files, run with `python -m pytest tests/ -v`:
+
+| File | Tests | What It Covers |
+|------|-------|---------------|
+| `tests/test_sde.py` | 16 | Schema validation, type lookups, blueprint resolution, materials, ME calculation (pure functions), chain resolution |
+| `tests/test_esi.py` | 10 | `build_asset_index` (flat), `build_location_asset_index` (per-location), `extract_manufacturing_stations` (frequency ranking) |
+| `tests/test_hauling.py` | 6 | `calculate_deficit`: all-at-station, split locations, nothing owned, volumes, multiple elsewhere, excess inventory |
+
+SDE tests require `data/sqlite-latest.sqlite` (skip gracefully if missing). ESI and hauling tests are pure-function tests with no database or network dependencies.
+
 ## Go Reference
 
 This Python app serves as a prototype and reference implementation. Corp mates building the consolidated Go-based industry tool can reference this codebase for domain logic, ME formulas, and chain resolution algorithms.
 
+## Uncommitted Work-in-Progress
+
+These changes exist in the working tree from a prior session and are **not yet committed**:
+
+| File | Change | Status |
+|------|--------|--------|
+| `eve_inventory.py` | Volume columns added to CLI `materials` and `chain` commands | Modified |
+| `templates/blueprint.html` | Volume column, profit link, JS live-update for volumes | Modified |
+| `templates/chain.html` | Volume column in raw materials table | Modified |
+| `templates/profit.html` | Full profit analysis template (222 lines) | New/untracked |
+
+These should be reviewed and committed. See `docs/plans/2026-02-24-handoff-and-next-steps.md` Task 1.
+
+## Known Code Quality Issues
+
+Identified during the hauling plan implementation code review (see plan doc Tasks 2-3 for fixes):
+
+1. **DRY violation**: Station-fetching logic duplicated in `api_stations()`, `shopping()`, and `chain_shopping()` in `app.py` — extract to `_get_station_list()` helper
+2. **Sequential ESI calls**: Station name resolution makes up to 10 HTTP requests per page load — add `get_cached_location_name()` with TTL cache
+3. **Silent exceptions**: Station list fetch uses bare `except Exception: pass` — add `logger.debug()` for debuggability
+
 ## Potential Next Steps
 
+- **Hauling view: station names**: Resolve location IDs to human-readable names in the hauling deficit "elsewhere" column (see plan doc Task 4)
 - **Job installation cost**: Add SDE-based job cost index to profit calculations (currently material-only)
 - **CSV/Excel export**: Dump shopping lists or profit analyses to spreadsheet
 - **Multi-blueprint profit comparison**: Compare profitability across multiple items side-by-side
 - **Invention calculator**: Success probability, expected cost per successful invention
-- **Hauling route optimization**: Resolve location IDs to station names in the hauling deficit view
 - **Job scheduler**: Track industry slot usage and optimal job timing
 - **Notification system**: Alert when jobs complete
 - **PI integration**: Planetary interaction material tracking
