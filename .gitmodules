@@ -1,0 +1,3 @@
+[submodule "tools/eve-sde-converter"]
+	path = tools/eve-sde-converter
+	url = https://github.com/noirsoldats/eve-sde-converter.git

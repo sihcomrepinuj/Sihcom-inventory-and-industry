@@ -192,6 +192,45 @@ def build_asset_index(assets: list[dict]) -> dict[int, int]:
     return dict(index)
 
 
+def build_location_asset_index(assets: list[dict]) -> dict[int, dict[int, int]]:
+    """
+    Build {type_id: {location_id: quantity}} from asset list.
+
+    Preserves per-location quantities for location-aware shopping lists.
+    """
+    index: dict[int, dict[int, int]] = {}
+    for a in assets:
+        tid = a["type_id"]
+        lid = a.get("location_id", 0)
+        qty = a.get("quantity", 1)
+        if tid not in index:
+            index[tid] = defaultdict(int)
+        index[tid][lid] += qty
+    # Convert inner defaultdicts to plain dicts for clean serialization
+    return {tid: dict(locs) for tid, locs in index.items()}
+
+
+def extract_manufacturing_stations(jobs: list[dict]) -> list[int]:
+    """
+    Extract unique manufacturing/reaction facility IDs from industry jobs.
+
+    Returns facility IDs ranked by frequency (most-used first).
+    Only includes manufacturing (activity_id=1) and reaction (activity_id=9) jobs.
+    """
+    from collections import Counter
+
+    PRODUCTION_ACTIVITIES = {1, 9}  # Manufacturing, Reactions
+    facility_counts: Counter = Counter()
+
+    for job in jobs:
+        if job.get("activity_id") in PRODUCTION_ACTIVITIES:
+            fid = job.get("facility_id")
+            if fid:
+                facility_counts[fid] += 1
+
+    return [fid for fid, _ in facility_counts.most_common()]
+
+
 # ------------------------------------------------------------------
 # Blueprints
 # ------------------------------------------------------------------
@@ -397,9 +436,9 @@ PRICE_CACHE_TTL = 300  # 5 minutes
 # {(region_id, type_id): (timestamp, data)}
 _price_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 
-# {entity_id: (timestamp, asset_index)}
-_asset_cache: dict[int, tuple[float, dict[int, int]]] = {}
-ASSET_CACHE_TTL = 600  # 10 minutes (assets change infrequently)
+# {entity_id: (timestamp, raw_assets_list)}
+_raw_asset_cache: dict[int, tuple[float, list[dict]]] = {}
+ASSET_CACHE_TTL = 600  # 10 minutes
 
 
 def fetch_market_orders(
@@ -508,32 +547,54 @@ def get_bulk_market_data(
     return results
 
 
-def get_cached_asset_index(
+def _get_cached_raw_assets(
     p: Preston,
     entity_id: int,
     is_corp: bool = False,
-) -> dict[int, int]:
-    """
-    Fetch and cache asset index for a character or corporation.
-
-    Cached for ASSET_CACHE_TTL seconds (default 10 min).
-    Returns cached data if available, otherwise fetches from ESI.
-    """
+) -> list[dict]:
+    """Fetch and cache raw asset list for a character or corporation."""
     now = _time.monotonic()
 
-    if entity_id in _asset_cache:
-        ts, index = _asset_cache[entity_id]
+    if entity_id in _raw_asset_cache:
+        ts, assets = _raw_asset_cache[entity_id]
         if now - ts < ASSET_CACHE_TTL:
-            return index
+            return assets
 
     if is_corp:
         assets = fetch_corp_assets(p, entity_id)
     else:
         assets = fetch_assets(p, entity_id)
 
-    index = build_asset_index(assets)
-    _asset_cache[entity_id] = (now, index)
-    return index
+    _raw_asset_cache[entity_id] = (now, assets)
+    return assets
+
+
+def get_cached_asset_index(
+    p: Preston,
+    entity_id: int,
+    is_corp: bool = False,
+) -> dict[int, int]:
+    """
+    Fetch and cache flat asset index for a character or corporation.
+
+    Returns {type_id: total_quantity} (location-unaware, for backward compat).
+    """
+    assets = _get_cached_raw_assets(p, entity_id, is_corp)
+    return build_asset_index(assets)
+
+
+def get_cached_location_asset_index(
+    p: Preston,
+    entity_id: int,
+    is_corp: bool = False,
+) -> dict[int, dict[int, int]]:
+    """
+    Fetch and cache location-aware asset index.
+
+    Returns {type_id: {location_id: quantity}}.
+    """
+    assets = _get_cached_raw_assets(p, entity_id, is_corp)
+    return build_location_asset_index(assets)
 
 
 def prefetch_asset_index(
@@ -541,14 +602,8 @@ def prefetch_asset_index(
     entity_id: int,
     is_corp: bool = False,
 ) -> None:
-    """
-    Proactively fetch and cache assets in the background.
-
-    Call this after login to warm up the cache before the user
-    navigates to shopping lists.
-    """
+    """Proactively fetch and cache assets in the background."""
     try:
-        get_cached_asset_index(p, entity_id, is_corp)
+        _get_cached_raw_assets(p, entity_id, is_corp)
     except Exception:
-        # Silently fail - assets will be fetched on demand if prefetch fails
         pass

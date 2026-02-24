@@ -24,6 +24,7 @@ from sde import (
     MaterialNode,
 )
 import esi
+from hauling import calculate_deficit
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -111,7 +112,7 @@ def _sde_is_valid(path: str) -> bool:
 
 
 def ensure_sde_downloaded():
-    """Download the SDE if it doesn't exist or is corrupt."""
+    """Download and convert the CCP YAML SDE if it doesn't exist or is corrupt."""
     from sde import DEFAULT_SDE_PATH
     logger.info(f"Checking for SDE at: {DEFAULT_SDE_PATH}")
 
@@ -123,7 +124,7 @@ def ensure_sde_downloaded():
             logger.warning("SDE file is corrupt — deleting and re-downloading...")
             os.remove(DEFAULT_SDE_PATH)
 
-    logger.info("Downloading SDE (~2 MB from Fuzzwork CSVs)...")
+    logger.info("Downloading CCP YAML SDE and converting to SQLite...")
     from setup_sde import build_database
     build_database()
     logger.info("SDE ready.")
@@ -201,6 +202,14 @@ def commas_filter(value):
     return f"{value:,}"
 
 
+@app.template_filter("vol")
+def vol_filter(value):
+    """Format a volume in m³."""
+    if not value:
+        return "-"
+    return f"{value:,.2f}"
+
+
 # ------------------------------------------------------------------
 # Routes — public
 # ------------------------------------------------------------------
@@ -235,8 +244,9 @@ def blueprint(bp_id):
 
     materials = calculate_materials(sde, bp_id, me, runs, structure_bonus)
 
-    # Attach market prices
+    # Attach market prices (volume already in materials from calculate_materials)
     grand_total = 0.0
+    grand_volume = 0.0
     if materials:
         type_ids = [m["type_id"] for m in materials]
         prices = esi.get_bulk_market_data(type_ids, region_id)
@@ -245,6 +255,7 @@ def blueprint(bp_id):
             mat["sell_price"] = sell_price
             mat["line_cost"] = sell_price * mat["adjusted_quantity"]
             grand_total += mat["line_cost"]
+            grand_volume += mat.get("total_volume", 0.0)
 
     base_time = sde.get_activity_time(bp_id, ACTIVITY_MANUFACTURING)
     invention_products = sde.get_invention_products(bp_id)
@@ -257,7 +268,7 @@ def blueprint(bp_id):
         "blueprint.html",
         bp_id=bp_id, bp_name=bp_name, product_name=product_name,
         me=me, runs=runs, structure_bonus=structure_bonus,
-        materials=materials, grand_total=grand_total,
+        materials=materials, grand_total=grand_total, grand_volume=grand_volume,
         base_time=base_time,
         invention_products=invention_products,
         invention_materials=invention_materials,
@@ -299,6 +310,7 @@ def api_materials(bp_id):
     materials = calculate_materials(sde, bp_id, me, runs, structure_bonus)
 
     grand_total = 0.0
+    grand_volume = 0.0
     if materials:
         type_ids = [m["type_id"] for m in materials]
         prices = esi.get_bulk_market_data(type_ids, region_id)
@@ -307,8 +319,9 @@ def api_materials(bp_id):
             mat["sell_price"] = sell_price
             mat["line_cost"] = sell_price * mat["adjusted_quantity"]
             grand_total += mat["line_cost"]
+            grand_volume += mat.get("total_volume", 0.0)
 
-    return jsonify(materials=materials, grand_total=grand_total)
+    return jsonify(materials=materials, grand_total=grand_total, grand_volume=grand_volume)
 
 
 # ------------------------------------------------------------------
@@ -361,13 +374,20 @@ def chain(bp_id):
     ))
     prices = esi.get_bulk_market_data(all_type_ids, region_id) if all_type_ids else {}
 
-    # Attach prices to raw materials
+    # Fetch volumes for all materials (raw + intermediates, for JS buy/build toggle)
+    volumes = sde.get_type_volumes(all_type_ids) if all_type_ids else {}
+
     raw_total = 0.0
+    raw_volume = 0.0
     for mat in raw_materials:
         sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
         mat["sell_price"] = sell_price
         mat["line_cost"] = sell_price * mat["quantity"]
         raw_total += mat["line_cost"]
+        unit_vol = volumes.get(mat["type_id"], 0.0)
+        mat["volume"] = unit_vol
+        mat["total_volume"] = unit_vol * mat["quantity"]
+        raw_volume += mat["total_volume"]
 
     # Price intermediates for buy-vs-build
     for inter in summary["intermediates"]:
@@ -384,8 +404,8 @@ def chain(bp_id):
         me=me, runs=runs, structure_bonus=structure_bonus,
         sub_me=sub_me, resolve_reactions=resolve_reactions,
         tree_data=tree_data,
-        raw_materials=raw_materials, raw_total=raw_total,
-        summary=summary, prices=prices,
+        raw_materials=raw_materials, raw_total=raw_total, raw_volume=raw_volume,
+        summary=summary, prices=prices, volumes=volumes,
         character_name=session.get("character_name"),
     )
 
@@ -439,12 +459,40 @@ def chain_shopping(bp_id):
         asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
         source = "personal"
 
+    # Location-aware hauling (when build station is selected)
+    build_station = request.args.get("location", type=int)
+    station_list = []
+    deficit_data = None
+
+    if build_station:
+        loc_index = esi.get_cached_location_asset_index(
+            p, corporation_id if source == "corp" and corporation_id else character_id,
+            is_corp=(source == "corp" and corporation_id is not None),
+        )
+        volumes_for_deficit = sde.get_type_volumes(
+            [m["type_id"] for m in shopping_materials]
+        ) if shopping_materials else {}
+        deficit_data = calculate_deficit(
+            shopping_materials, loc_index, build_station, volumes_for_deficit,
+        )
+
+    try:
+        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
+        raw_stations = esi.extract_manufacturing_stations(jobs)
+        for sid in raw_stations[:10]:
+            name = esi.resolve_location_name(p, sid, "other")
+            station_list.append({"id": sid, "name": name})
+    except Exception:
+        pass
+
     session["refresh_token"] = p.refresh_token
 
-    # Calculate deficits and costs
+    # Calculate deficits, costs, and volumes
     total_buy_cost = 0.0
+    total_buy_volume = 0.0
     type_ids = [m["type_id"] for m in shopping_materials]
     prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
+    volumes = sde.get_type_volumes(type_ids) if type_ids else {}
 
     for mat in shopping_materials:
         mat["have"] = asset_index.get(mat["type_id"], 0)
@@ -453,6 +501,11 @@ def chain_shopping(bp_id):
         mat["sell_price"] = sell_price
         mat["buy_cost"] = sell_price * mat["deficit"]
         total_buy_cost += mat["buy_cost"]
+        unit_vol = volumes.get(mat["type_id"], 0.0)
+        mat["volume"] = unit_vol
+        mat["total_volume"] = unit_vol * mat["quantity"]
+        mat["buy_volume"] = unit_vol * mat["deficit"]
+        total_buy_volume += mat["buy_volume"]
 
     return render_template(
         "chain_shopping.html",
@@ -460,9 +513,13 @@ def chain_shopping(bp_id):
         me=me, runs=runs, structure_bonus=structure_bonus,
         sub_me=sub_me, resolve_reactions=resolve_reactions,
         materials=shopping_materials, total_buy_cost=total_buy_cost,
+        total_buy_volume=total_buy_volume,
         summary=summary, buy_param=buy_param,
         character_name=session.get("character_name"),
         source=source, has_corp=corporation_id is not None,
+        build_station=build_station,
+        station_list=station_list,
+        deficit_data=deficit_data,
     )
 
 
@@ -488,19 +545,28 @@ def api_chain(bp_id):
     ))
     prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
 
+    volumes = sde.get_type_volumes(type_ids) if type_ids else {}
+
     raw_total = 0.0
+    raw_volume = 0.0
     for mat in raw_materials:
         sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
         mat["sell_price"] = sell_price
         mat["line_cost"] = sell_price * mat["quantity"]
         raw_total += mat["line_cost"]
+        unit_vol = volumes.get(mat["type_id"], 0.0)
+        mat["volume"] = unit_vol
+        mat["total_volume"] = unit_vol * mat["quantity"]
+        raw_volume += mat["total_volume"]
 
     return jsonify(
         tree=_nodes_to_dict(tree),
         raw_materials=raw_materials,
         raw_total=raw_total,
+        raw_volume=raw_volume,
         summary=summary,
         prices={str(k): v for k, v in prices.items()},
+        volumes={str(k): v for k, v in volumes.items()},
     )
 
 
@@ -559,6 +625,29 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.route("/api/stations")
+@login_required
+def api_stations():
+    """Return the user's manufacturing stations ranked by usage."""
+    p = get_authed_preston_from_session()
+    if not p:
+        return jsonify(error="Session expired"), 401
+
+    character_id = int(session["character_id"])
+    jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
+
+    station_ids = esi.extract_manufacturing_stations(jobs)
+
+    # Resolve names
+    stations = []
+    for sid in station_ids[:10]:  # limit to top 10
+        name = esi.resolve_location_name(p, sid, "other")
+        stations.append({"id": sid, "name": name})
+
+    session["refresh_token"] = p.refresh_token
+    return jsonify(stations=stations)
+
+
 # ------------------------------------------------------------------
 # Routes — authenticated
 # ------------------------------------------------------------------
@@ -595,10 +684,38 @@ def shopping(bp_id):
         asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
         source = "personal"  # normalize if corp was unavailable
 
+    # Location-aware hauling (when build station is selected)
+    build_station = request.args.get("location", type=int)
+    station_list = []
+    deficit_data = None
+
+    if build_station:
+        loc_index = esi.get_cached_location_asset_index(
+            p, corporation_id if source == "corp" and corporation_id else character_id,
+            is_corp=(source == "corp" and corporation_id is not None),
+        )
+        volumes = sde.get_type_volumes([m["type_id"] for m in materials]) if materials else {}
+        deficit_data = calculate_deficit(
+            [{"type_id": m["type_id"], "name": m["name"], "quantity": m["adjusted_quantity"]}
+             for m in materials],
+            loc_index, build_station, volumes,
+        )
+
+    # Always fetch station list for the dropdown (if logged in)
+    try:
+        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
+        raw_stations = esi.extract_manufacturing_stations(jobs)
+        for sid in raw_stations[:10]:
+            name = esi.resolve_location_name(p, sid, "other")
+            station_list.append({"id": sid, "name": name})
+    except Exception:
+        pass  # Station list is optional
+
     # Update session refresh token in case Preston rotated it
     session["refresh_token"] = p.refresh_token
 
     total_buy_cost = 0.0
+    total_buy_volume = 0.0
     if materials:
         type_ids = [m["type_id"] for m in materials]
         prices = esi.get_bulk_market_data(type_ids, region_id)
@@ -609,16 +726,219 @@ def shopping(bp_id):
             mat["sell_price"] = sell_price
             mat["buy_cost"] = sell_price * mat["deficit"]
             total_buy_cost += mat["buy_cost"]
+            mat["buy_volume"] = mat.get("volume", 0.0) * mat["deficit"]
+            total_buy_volume += mat["buy_volume"]
 
     return render_template(
         "shopping.html",
         bp_id=bp_id, bp_name=bp_name, product_name=product_name,
         me=me, runs=runs, structure_bonus=structure_bonus,
         materials=materials, total_buy_cost=total_buy_cost,
+        total_buy_volume=total_buy_volume,
         character_name=session.get("character_name"),
         source=source,
         has_corp=corporation_id is not None,
+        build_station=build_station,
+        station_list=station_list,
+        deficit_data=deficit_data,
     )
+
+
+def _compute_profit(sde, bp_id, me, runs, structure_bonus, region_id,
+                     broker_fee, sales_tax, material_cost_pct, asset_index):
+    """Shared profit calculation logic for route and API."""
+    product_id = sde.find_product_for_blueprint(bp_id)
+    bp_name = sde.get_type_name(bp_id)
+    product_name = sde.get_type_name(product_id) if product_id else bp_name
+
+    # Product quantity per run (e.g. 100 for ammo, 1 for ships)
+    prod_row = sde.conn.execute(
+        "SELECT quantity FROM industryActivityProducts "
+        "WHERE typeID = ? AND activityID = 1",
+        (bp_id,),
+    ).fetchone()
+    qty_per_run = prod_row["quantity"] if prod_row else 1
+    total_product_qty = qty_per_run * runs
+
+    materials = calculate_materials(sde, bp_id, me, runs, structure_bonus)
+
+    # Fetch prices for materials + product
+    mat_type_ids = [m["type_id"] for m in materials]
+    all_type_ids = mat_type_ids + ([product_id] if product_id else [])
+    prices = esi.get_bulk_market_data(all_type_ids, region_id) if all_type_ids else {}
+
+    cost_pct = material_cost_pct / 100.0
+    total_owned_cost = 0.0
+    total_buy_cost = 0.0
+    total_buy_volume = 0.0
+
+    for mat in materials:
+        needed = mat["adjusted_quantity"]
+        have = asset_index.get(mat["type_id"], 0)
+        owned_qty = min(have, needed)
+        buy_qty = max(0, needed - have)
+
+        sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
+        owned_cost = owned_qty * sell_price * cost_pct
+        buy_cost = buy_qty * sell_price
+
+        mat["have"] = have
+        mat["owned_qty"] = owned_qty
+        mat["buy_qty"] = buy_qty
+        mat["sell_price"] = sell_price
+        mat["owned_cost"] = owned_cost
+        mat["line_buy_cost"] = buy_cost
+        mat["line_cost"] = owned_cost + buy_cost
+        mat["buy_volume"] = mat.get("volume", 0.0) * buy_qty
+
+        total_owned_cost += owned_cost
+        total_buy_cost += buy_cost
+        total_buy_volume += mat["buy_volume"]
+
+    material_cost = total_owned_cost + total_buy_cost
+
+    # Product revenue
+    product_data = prices.get(product_id, {}) if product_id else {}
+    sell_min = product_data.get("sell_min", 0.0)
+    buy_max = product_data.get("buy_max", 0.0)
+
+    broker_rate = broker_fee / 100.0
+    tax_rate = sales_tax / 100.0
+
+    net_sell_unit = sell_min * (1 - broker_rate - tax_rate)
+    net_buy_unit = buy_max * (1 - tax_rate)
+
+    revenue_sell = net_sell_unit * total_product_qty
+    revenue_buy = net_buy_unit * total_product_qty
+
+    profit_sell = revenue_sell - material_cost
+    profit_buy = revenue_buy - material_cost
+
+    margin_sell = (profit_sell / revenue_sell * 100) if revenue_sell > 0 else 0.0
+    margin_buy = (profit_buy / revenue_buy * 100) if revenue_buy > 0 else 0.0
+
+    base_time = sde.get_activity_time(bp_id, ACTIVITY_MANUFACTURING)
+    if base_time:
+        total_time_hrs = (base_time * runs) / 3600.0
+        isk_hr_sell = profit_sell / total_time_hrs if total_time_hrs > 0 else 0.0
+        isk_hr_buy = profit_buy / total_time_hrs if total_time_hrs > 0 else 0.0
+    else:
+        total_time_hrs = None
+        isk_hr_sell = None
+        isk_hr_buy = None
+
+    return {
+        "bp_name": bp_name,
+        "product_name": product_name,
+        "product_id": product_id,
+        "qty_per_run": qty_per_run,
+        "total_product_qty": total_product_qty,
+        "materials": materials,
+        "total_owned_cost": total_owned_cost,
+        "total_buy_cost": total_buy_cost,
+        "material_cost": material_cost,
+        "total_buy_volume": total_buy_volume,
+        "sell_min": sell_min,
+        "buy_max": buy_max,
+        "broker_fee": broker_fee,
+        "sales_tax": sales_tax,
+        "net_sell_unit": net_sell_unit,
+        "net_buy_unit": net_buy_unit,
+        "revenue_sell": revenue_sell,
+        "revenue_buy": revenue_buy,
+        "profit_sell": profit_sell,
+        "profit_buy": profit_buy,
+        "margin_sell": margin_sell,
+        "margin_buy": margin_buy,
+        "base_time": base_time,
+        "total_time_hrs": total_time_hrs,
+        "isk_hr_sell": isk_hr_sell,
+        "isk_hr_buy": isk_hr_buy,
+    }
+
+
+@app.route("/profit/<int:bp_id>")
+@login_required
+def profit(bp_id):
+    me = int(request.args.get("me", 10))
+    runs = int(request.args.get("runs", 1))
+    structure_bonus = float(request.args.get("structure_bonus", 0))
+    broker_fee = float(request.args.get("broker_fee", 1.5))
+    sales_tax = float(request.args.get("sales_tax", 3.6))
+    material_cost_pct = float(request.args.get("material_cost_pct", 100))
+    source = request.args.get("source", "corp")
+
+    sde = get_sde()
+    region_id = esi.get_market_region()
+
+    p = get_authed_preston_from_session()
+    if not p:
+        flash("Session expired. Please log in again.")
+        return redirect(url_for("login"))
+
+    character_id = int(session["character_id"])
+    corporation_id = session.get("corporation_id")
+
+    if source == "corp" and corporation_id:
+        asset_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+    else:
+        asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+        source = "personal"
+
+    session["refresh_token"] = p.refresh_token
+
+    data = _compute_profit(
+        sde, bp_id, me, runs, structure_bonus, region_id,
+        broker_fee, sales_tax, material_cost_pct, asset_index,
+    )
+
+    return render_template(
+        "profit.html",
+        bp_id=bp_id, me=me, runs=runs,
+        structure_bonus=structure_bonus,
+        broker_fee=broker_fee, sales_tax=sales_tax,
+        material_cost_pct=material_cost_pct,
+        source=source,
+        has_corp=corporation_id is not None,
+        character_name=session.get("character_name"),
+        **data,
+    )
+
+
+@app.route("/api/profit/<int:bp_id>")
+@login_required
+def api_profit(bp_id):
+    me = int(request.args.get("me", 10))
+    runs = int(request.args.get("runs", 1))
+    structure_bonus = float(request.args.get("structure_bonus", 0))
+    broker_fee = float(request.args.get("broker_fee", 1.5))
+    sales_tax = float(request.args.get("sales_tax", 3.6))
+    material_cost_pct = float(request.args.get("material_cost_pct", 100))
+    source = request.args.get("source", "corp")
+
+    sde = get_sde()
+    region_id = esi.get_market_region()
+
+    p = get_authed_preston_from_session()
+    if not p:
+        return jsonify(error="Session expired"), 401
+
+    character_id = int(session["character_id"])
+    corporation_id = session.get("corporation_id")
+
+    if source == "corp" and corporation_id:
+        asset_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+    else:
+        asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+
+    session["refresh_token"] = p.refresh_token
+
+    data = _compute_profit(
+        sde, bp_id, me, runs, structure_bonus, region_id,
+        broker_fee, sales_tax, material_cost_pct, asset_index,
+    )
+
+    return jsonify(**data)
 
 
 # ------------------------------------------------------------------

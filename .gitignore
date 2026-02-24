@@ -17,5 +17,10 @@ __pycache__/
 # Archives
 files.zip
 
+# SDE conversion working files
+sde/
+*.zip
+eve.db
+
 # Misc
 nul

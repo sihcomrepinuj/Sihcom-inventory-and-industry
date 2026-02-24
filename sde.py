@@ -1,5 +1,8 @@
 """
-sde.py — Interface to the Fuzzwork SQLite SDE database.
+sde.py — Interface to the EVE Online SDE SQLite database.
+
+The database is built from CCP's official YAML SDE using
+noirsoldats/eve-sde-converter (git submodule at tools/eve-sde-converter).
 
 Provides:
   - Type name lookups (much faster than ESI)
@@ -8,8 +11,7 @@ Provides:
   - Activity times and invention data
   - ME-adjusted material calculations
 
-The SDE database can be obtained by running setup_sde.py or by downloading
-directly from https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2
+Run setup_sde.py to download and convert the latest SDE.
 """
 
 import math
@@ -46,7 +48,9 @@ DEFAULT_SDE_PATH = os.path.join(
 
 class SDE:
     """
-    Interface to the Fuzzwork SDE SQLite database.
+    Interface to the EVE Online SDE SQLite database.
+
+    Built from CCP's official YAML SDE via eve-sde-converter.
 
     Key tables used:
         invTypes                    - type_id <-> name mapping
@@ -61,8 +65,7 @@ class SDE:
         if not os.path.exists(db_path):
             raise FileNotFoundError(
                 f"SDE database not found at: {db_path}\n"
-                "Run 'python setup_sde.py' to download it, or download from:\n"
-                "  https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2"
+                "Run 'python setup_sde.py' to download and convert the CCP YAML SDE."
             )
 
         self.conn = sqlite3.connect(db_path)
@@ -177,7 +180,8 @@ class SDE:
             """
             SELECT iam.materialTypeID AS type_id,
                    it.typeName        AS name,
-                   iam.quantity        AS quantity
+                   iam.quantity        AS quantity,
+                   it.volume          AS volume
             FROM industryActivityMaterials iam
             JOIN invTypes it ON iam.materialTypeID = it.typeID
             WHERE iam.typeID = ? AND iam.activityID = 1
@@ -195,7 +199,8 @@ class SDE:
             """
             SELECT iam.materialTypeID AS type_id,
                    it.typeName        AS name,
-                   iam.quantity        AS quantity
+                   iam.quantity        AS quantity,
+                   it.volume          AS volume
             FROM industryActivityMaterials iam
             JOIN invTypes it ON iam.materialTypeID = it.typeID
             WHERE iam.typeID = ? AND iam.activityID = ?
@@ -230,6 +235,18 @@ class SDE:
             (blueprint_type_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_type_volumes(self, type_ids: list[int]) -> dict[int, float]:
+        """Bulk look up packaged volumes for types. Returns {type_id: volume}."""
+        if not type_ids:
+            return {}
+        unique = list(set(type_ids))
+        placeholders = ",".join("?" * len(unique))
+        rows = self.conn.execute(
+            f"SELECT typeID, volume FROM invTypes WHERE typeID IN ({placeholders})",
+            unique,
+        ).fetchall()
+        return {r["typeID"]: r["volume"] or 0.0 for r in rows}
 
     # ------------------------------------------------------------------
     # Chain resolution helpers
@@ -378,6 +395,7 @@ def calculate_materials(
     for mat in base_materials:
         base_total = mat["quantity"] * runs
         adjusted = apply_me(mat["quantity"], me_level, runs, structure_bonus)
+        volume = mat.get("volume", 0.0) or 0.0
         results.append({
             "type_id": mat["type_id"],
             "name": mat["name"],
@@ -385,6 +403,8 @@ def calculate_materials(
             "base_total": base_total,
             "adjusted_quantity": adjusted,
             "saved": base_total - adjusted,
+            "volume": volume,
+            "total_volume": volume * adjusted,
         })
     return results
 

@@ -45,6 +45,15 @@
         </select>
     </label>
     {% endif %}
+    <label>
+        Build Station
+        <select name="location">
+            <option value="">All locations</option>
+            {% for station in station_list %}
+            <option value="{{ station.id }}" {% if build_station == station.id %}selected{% endif %}>{{ station.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
     <input type="hidden" name="buy" value="{{ buy_param }}">
     <button type="submit">Update</button>
 </form>
@@ -66,6 +75,7 @@
             <th class="text-right">Need</th>
             <th class="text-right">Have</th>
             <th class="text-right">Buy</th>
+            <th class="text-right">Buy Vol m³</th>
             <th class="text-right">Jita Sell</th>
             <th class="text-right">Est. Cost</th>
             <th class="text-right">Status</th>
@@ -78,6 +88,7 @@
             <td class="text-right">{{ mat.quantity | commas }}</td>
             <td class="text-right">{{ mat.have | commas }}</td>
             <td class="text-right">{{ mat.deficit | commas }}</td>
+            <td class="text-right">{{ mat.buy_volume | vol }}</td>
             <td class="text-right">{{ mat.sell_price | isk }}</td>
             <td class="text-right">{{ mat.buy_cost | isk }}</td>
             <td class="text-right">
@@ -92,12 +103,75 @@
     </tbody>
     <tfoot>
         <tr>
-            <td colspan="5" class="text-right grand-total">Estimated Buy Cost</td>
+            <td colspan="4" class="text-right grand-total">Total Buy Volume</td>
+            <td class="text-right grand-total">{{ total_buy_volume | vol }} m³</td>
+            <td class="text-right grand-total">Estimated Buy Cost</td>
             <td class="text-right grand-total">{{ total_buy_cost | isk }} ISK</td>
             <td></td>
         </tr>
     </tfoot>
 </table>
+
+{% if deficit_data %}
+<h3>Hauling Plan</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th>Material</th>
+            <th class="text-right">Need</th>
+            <th class="text-right">At Station</th>
+            <th class="text-right">Haul (elsewhere)</th>
+            <th class="text-right">Haul Vol m³</th>
+            <th class="text-right">Buy</th>
+            <th class="text-right">Buy Vol m³</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for d in deficit_data %}
+        <tr>
+            <td><a href="/market/{{ d.type_id }}">{{ d.name }}</a></td>
+            <td class="text-right">{{ d.quantity_needed | commas }}</td>
+            <td class="text-right">
+                {% if d.at_station > 0 %}
+                    <span class="status-ok">{{ d.at_station | commas }}</span>
+                {% else %}
+                    0
+                {% endif %}
+            </td>
+            <td class="text-right">
+                {% set haul_total = d.elsewhere.values() | sum %}
+                {% if haul_total > 0 %}
+                    {{ haul_total | commas }}
+                    <small class="text-muted">
+                        ({% for loc_id, qty in d.elsewhere.items() %}{{ qty | commas }}{% if not loop.last %}, {% endif %}{% endfor %})
+                    </small>
+                {% else %}
+                    0
+                {% endif %}
+            </td>
+            <td class="text-right">{{ d.elsewhere_volume | vol }}</td>
+            <td class="text-right">
+                {% if d.to_buy > 0 %}
+                    <span class="status-need">{{ d.to_buy | commas }}</span>
+                {% else %}
+                    0
+                {% endif %}
+            </td>
+            <td class="text-right">{{ d.to_buy_volume | vol }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td colspan="4" class="text-right grand-total">Total Haul Volume</td>
+            <td class="text-right grand-total">{{ deficit_data | sum(attribute='elsewhere_volume') | vol }} m³</td>
+            <td class="text-right grand-total">Total Buy Volume</td>
+            <td class="text-right grand-total">{{ deficit_data | sum(attribute='to_buy_volume') | vol }} m³</td>
+        </tr>
+    </tfoot>
+</table>
+{% endif %}
 
 {% set missing = materials | selectattr('deficit', 'greaterthan', 0) | list | length %}
 {% if missing == 0 %}
