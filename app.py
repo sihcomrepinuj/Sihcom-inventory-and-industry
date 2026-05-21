@@ -58,6 +58,25 @@ def get_cached_chain(sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reac
     return tree, raw_materials, summary
 
 
+def _get_station_list(p: Preston, character_id: int) -> list[dict]:
+    """Fetch manufacturing stations for the character, ranked by usage.
+
+    Returns up to 10 stations as [{id, name}, ...]. Returns an empty list on
+    any failure (the station dropdown is optional UI).
+    """
+    try:
+        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
+        station_ids = esi.extract_manufacturing_stations(jobs)
+        stations = []
+        for sid in station_ids[:10]:
+            name = esi.resolve_location_name(p, sid, "other")
+            stations.append({"id": sid, "name": name})
+        return stations
+    except Exception:
+        logger.debug("Could not fetch station list", exc_info=True)
+        return []
+
+
 @app.errorhandler(Exception)
 def handle_error(e):
     logger.error(f"Unhandled error: {e}\n{traceback.format_exc()}")
@@ -461,7 +480,6 @@ def chain_shopping(bp_id):
 
     # Location-aware hauling (when build station is selected)
     build_station = request.args.get("location", type=int)
-    station_list = []
     deficit_data = None
 
     if build_station:
@@ -476,14 +494,7 @@ def chain_shopping(bp_id):
             shopping_materials, loc_index, build_station, volumes_for_deficit,
         )
 
-    try:
-        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
-        raw_stations = esi.extract_manufacturing_stations(jobs)
-        for sid in raw_stations[:10]:
-            name = esi.resolve_location_name(p, sid, "other")
-            station_list.append({"id": sid, "name": name})
-    except Exception:
-        pass
+    station_list = _get_station_list(p, character_id)
 
     session["refresh_token"] = p.refresh_token
 
@@ -634,15 +645,7 @@ def api_stations():
         return jsonify(error="Session expired"), 401
 
     character_id = int(session["character_id"])
-    jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
-
-    station_ids = esi.extract_manufacturing_stations(jobs)
-
-    # Resolve names
-    stations = []
-    for sid in station_ids[:10]:  # limit to top 10
-        name = esi.resolve_location_name(p, sid, "other")
-        stations.append({"id": sid, "name": name})
+    stations = _get_station_list(p, character_id)
 
     session["refresh_token"] = p.refresh_token
     return jsonify(stations=stations)
@@ -686,7 +689,6 @@ def shopping(bp_id):
 
     # Location-aware hauling (when build station is selected)
     build_station = request.args.get("location", type=int)
-    station_list = []
     deficit_data = None
 
     if build_station:
@@ -702,14 +704,7 @@ def shopping(bp_id):
         )
 
     # Always fetch station list for the dropdown (if logged in)
-    try:
-        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
-        raw_stations = esi.extract_manufacturing_stations(jobs)
-        for sid in raw_stations[:10]:
-            name = esi.resolve_location_name(p, sid, "other")
-            station_list.append({"id": sid, "name": name})
-    except Exception:
-        pass  # Station list is optional
+    station_list = _get_station_list(p, character_id)
 
     # Update session refresh token in case Preston rotated it
     session["refresh_token"] = p.refresh_token
