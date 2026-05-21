@@ -35,6 +35,7 @@
             <th class="text-right">Per Run</th>
             <th class="text-right">Total (ME {{ me }})</th>
             <th class="text-right">Saved</th>
+            <th class="text-right">Vol m³</th>
             <th class="text-right">Jita Sell</th>
             <th class="text-right">Total Cost</th>
         </tr>
@@ -46,6 +47,7 @@
             <td class="text-right">{{ mat.base_quantity | commas }}</td>
             <td class="text-right" data-field="adjusted">{{ mat.adjusted_quantity | commas }}</td>
             <td class="text-right" data-field="saved">{{ mat.saved | commas }}</td>
+            <td class="text-right" data-field="volume">{{ mat.total_volume | vol }}</td>
             <td class="text-right" data-field="sell">{{ mat.sell_price | isk }}</td>
             <td class="text-right" data-field="cost">{{ mat.line_cost | isk }}</td>
         </tr>
@@ -53,7 +55,9 @@
     </tbody>
     <tfoot>
         <tr>
-            <td colspan="5" class="text-right grand-total">Estimated Material Cost</td>
+            <td colspan="4" class="text-right grand-total">Total Volume</td>
+            <td class="text-right grand-total" id="grand-volume">{{ grand_volume | vol }} m³</td>
+            <td class="text-right grand-total">Estimated Material Cost</td>
             <td class="text-right grand-total" id="grand-total">{{ grand_total | isk }} ISK</td>
         </tr>
     </tfoot>
@@ -88,6 +92,7 @@
 <p><a href="/chain/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" class="outline" id="chain-link">Full Material Chain</a></p>
 {% if character_name %}
 <p><a href="/shopping/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" id="shopping-link">Shopping List (check assets)</a></p>
+<p><a href="/profit/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}" role="button" class="outline" id="profit-link">Profit Analysis</a></p>
 {% endif %}
 {% endblock %}
 
@@ -113,8 +118,11 @@
     runsInput.addEventListener('input', scheduleUpdate);
     structInput.addEventListener('input', scheduleUpdate);
 
+    const grandVolume = document.getElementById('grand-volume');
+
     function fmtNum(n) { return n.toLocaleString(); }
     function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+    function fmtVol(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
 
     function updateLinks() {
         const me = meSelect.value;
@@ -123,8 +131,10 @@
         const params = `me=${me}&runs=${runs}&structure_bonus=${sb}`;
         const chainLink = document.getElementById('chain-link');
         const shopLink = document.getElementById('shopping-link');
+        const profitLink = document.getElementById('profit-link');
         if (chainLink) chainLink.href = `/chain/${bpId}?${params}`;
         if (shopLink) shopLink.href = `/shopping/${bpId}?${params}`;
+        if (profitLink) profitLink.href = `/profit/${bpId}?${params}`;
     }
 
     function fetchMaterials() {
@@ -139,15 +149,19 @@
             .then(r => r.json())
             .then(data => {
                 const rows = tbody.querySelectorAll('tr');
+                let totalVol = 0;
                 data.materials.forEach((mat, i) => {
                     if (!rows[i]) return;
                     const cells = rows[i].querySelectorAll('td');
                     cells[2].textContent = fmtNum(mat.adjusted_quantity);
                     cells[3].textContent = fmtNum(mat.saved);
-                    cells[4].textContent = fmtIsk(mat.sell_price);
-                    cells[5].textContent = fmtIsk(mat.line_cost);
+                    cells[4].textContent = fmtVol(mat.total_volume || 0);
+                    cells[5].textContent = fmtIsk(mat.sell_price);
+                    cells[6].textContent = fmtIsk(mat.line_cost);
+                    totalVol += (mat.total_volume || 0);
                 });
                 grandTotal.textContent = fmtIsk(data.grand_total) + ' ISK';
+                if (grandVolume) grandVolume.textContent = fmtVol(totalVol) + ' m³';
 
                 // Update ME label in header
                 const th = document.querySelector('#materials-table thead th:nth-child(3)');

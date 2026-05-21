@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}{{ product_name }} — Profit Analysis{% endblock %}
+
+{% block content %}
+<style>
+    .profit-positive { color: var(--pico-ins-color); }
+    .profit-negative { color: var(--pico-del-color); font-weight: bold; }
+    .summary-table td { border: none; padding: 0.25rem 0.5rem; }
+    .summary-table th { border: none; padding: 0.25rem 0.5rem; }
+</style>
+
+<hgroup>
+    <h2>Profit Analysis: {{ product_name }}</h2>
+    <p>{{ bp_name }}</p>
+</hgroup>
+
+<form method="get" action="/profit/{{ bp_id }}" class="controls">
+    <label>
+        ME
+        <select name="me" id="me-select">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == me %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Runs
+        <input type="number" name="runs" id="runs-input" value="{{ runs }}" min="1" style="width:6rem">
+    </label>
+    <label>
+        Structure %
+        <input type="number" name="structure_bonus" id="struct-input" value="{{ structure_bonus }}" min="0" step="0.1" style="width:6rem">
+    </label>
+    <label>
+        Broker %
+        <input type="number" name="broker_fee" id="broker-input" value="{{ broker_fee }}" min="0" step="0.1" style="width:5rem">
+    </label>
+    <label>
+        Sales Tax %
+        <input type="number" name="sales_tax" id="tax-input" value="{{ sales_tax }}" min="0" step="0.1" style="width:5rem">
+    </label>
+    <label>
+        Material Cost %
+        <input type="number" name="material_cost_pct" id="costpct-input" value="{{ material_cost_pct }}" min="0" max="200" step="1" style="width:5rem">
+    </label>
+    {% if has_corp %}
+    <label>
+        Assets
+        <select name="source" id="source-select">
+            <option value="corp" {% if source == 'corp' %}selected{% endif %}>Corporation</option>
+            <option value="personal" {% if source == 'personal' %}selected{% endif %}>Personal</option>
+        </select>
+    </label>
+    {% endif %}
+    <button type="submit">Update</button>
+</form>
+
+<p class="text-muted">
+    {{ total_product_qty }}x {{ product_name }}
+    ({{ runs }} run{{ 's' if runs != 1 else '' }}{% if qty_per_run > 1 %}, {{ qty_per_run }}/run{% endif %})
+    &mdash; <strong>{{ 'corporation' if source == 'corp' else 'personal' }}</strong> assets
+    &mdash; owned materials at {{ material_cost_pct | int }}% of Jita
+</p>
+
+{% if materials %}
+<!-- Material Cost Table -->
+<details open>
+    <summary><h3 style="display:inline">Material Cost</h3></summary>
+    <table id="mat-table">
+        <thead>
+            <tr>
+                <th>Material</th>
+                <th class="text-right">Need</th>
+                <th class="text-right">Have</th>
+                <th class="text-right">Buy</th>
+                <th class="text-right">Buy Vol m³</th>
+                <th class="text-right">Jita Sell</th>
+                <th class="text-right">Line Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for mat in materials %}
+            <tr>
+                <td><a href="/market/{{ mat.type_id }}">{{ mat.name }}</a></td>
+                <td class="text-right">{{ mat.adjusted_quantity | commas }}</td>
+                <td class="text-right">{{ mat.have | commas }}</td>
+                <td class="text-right">{{ mat.buy_qty | commas }}</td>
+                <td class="text-right">{{ mat.buy_volume | vol }}</td>
+                <td class="text-right">{{ mat.sell_price | isk }}</td>
+                <td class="text-right">{{ mat.line_cost | isk }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="5" class="text-right">On hand ({{ material_cost_pct | int }}% Jita)</td>
+                <td></td>
+                <td class="text-right">{{ total_owned_cost | isk }} ISK</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="text-right">To buy</td>
+                <td></td>
+                <td class="text-right">{{ total_buy_cost | isk }} ISK</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="text-right grand-total">Total Material Cost</td>
+                <td></td>
+                <td class="text-right grand-total" id="total-mat-cost">{{ material_cost | isk }} ISK</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="text-right">Total Buy Volume</td>
+                <td></td>
+                <td class="text-right">{{ total_buy_volume | vol }} m³</td>
+            </tr>
+        </tfoot>
+    </table>
+</details>
+
+<!-- Revenue Breakdown -->
+<details open>
+    <summary><h3 style="display:inline">Product Revenue (per unit)</h3></summary>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th></th>
+                <th class="text-right">Sell Order</th>
+                <th class="text-right">Instant Sell</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Market price</td>
+                <td class="text-right">{{ sell_min | isk }} ISK</td>
+                <td class="text-right">{{ buy_max | isk }} ISK</td>
+            </tr>
+            <tr>
+                <td>Broker fee ({{ broker_fee }}%)</td>
+                <td class="text-right">-{{ (sell_min * broker_fee / 100) | isk }} ISK</td>
+                <td class="text-right text-muted">-</td>
+            </tr>
+            <tr>
+                <td>Sales tax ({{ sales_tax }}%)</td>
+                <td class="text-right">-{{ (sell_min * sales_tax / 100) | isk }} ISK</td>
+                <td class="text-right">-{{ (buy_max * sales_tax / 100) | isk }} ISK</td>
+            </tr>
+            <tr style="font-weight:bold;">
+                <td>Net per unit</td>
+                <td class="text-right">{{ net_sell_unit | isk }} ISK</td>
+                <td class="text-right">{{ net_buy_unit | isk }} ISK</td>
+            </tr>
+        </tbody>
+    </table>
+</details>
+
+<!-- Profit Summary -->
+<details open>
+    <summary><h3 style="display:inline">Profit Summary ({{ total_product_qty }}x {{ product_name }})</h3></summary>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th></th>
+                <th class="text-right">Sell Order</th>
+                <th class="text-right">Instant Sell</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Revenue ({{ total_product_qty }}x)</td>
+                <td class="text-right">{{ revenue_sell | isk }} ISK</td>
+                <td class="text-right">{{ revenue_buy | isk }} ISK</td>
+            </tr>
+            <tr>
+                <td>Material cost</td>
+                <td class="text-right">-{{ material_cost | isk }} ISK</td>
+                <td class="text-right">-{{ material_cost | isk }} ISK</td>
+            </tr>
+            <tr style="font-weight:bold; font-size:1.1rem;">
+                <td>Profit</td>
+                <td class="text-right {% if profit_sell >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ profit_sell | isk }} ISK
+                </td>
+                <td class="text-right {% if profit_buy >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ profit_buy | isk }} ISK
+                </td>
+            </tr>
+            <tr>
+                <td>Margin</td>
+                <td class="text-right {% if margin_sell >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ "%.1f" | format(margin_sell) }}%
+                </td>
+                <td class="text-right {% if margin_buy >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ "%.1f" | format(margin_buy) }}%
+                </td>
+            </tr>
+            {% if isk_hr_sell is not none %}
+            <tr>
+                <td>ISK/hr</td>
+                <td class="text-right {% if isk_hr_sell >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ isk_hr_sell | isk }} ISK
+                </td>
+                <td class="text-right {% if isk_hr_buy >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    {{ isk_hr_buy | isk }} ISK
+                </td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</details>
+
+{% if base_time %}
+<p class="text-muted">
+    Base manufacturing time: {{ base_time | ftime }} per run
+    {% if runs > 1 %} | Total: {{ (base_time * runs) | ftime }}{% endif %}
+</p>
+{% endif %}
+
+{% else %}
+<p>No manufacturing materials found for this blueprint.</p>
+{% endif %}
+
+<p><a href="/blueprint/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}">&larr; Back to materials view</a></p>
+{% endblock %}

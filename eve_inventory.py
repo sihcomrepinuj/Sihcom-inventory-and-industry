@@ -133,26 +133,31 @@ def cmd_materials(sde: SDE, args: list[str], structure_bonus: float,
     prices = esi.get_bulk_market_data(type_ids, region_id)
 
     hdr = (f"{'Material':<30} {'Per Run':>10} {'Total(ME'+str(me)+')':>12}"
-           f" {'Saved':>8} {'Jita Sell':>14} {'Total Cost':>16}")
+           f" {'Saved':>8} {'Vol m³':>12} {'Jita Sell':>14} {'Total Cost':>16}")
     print(f"\n  {hdr}")
-    print(f"  {'-'*30} {'-'*10} {'-'*12} {'-'*8} {'-'*14} {'-'*16}")
+    print(f"  {'-'*30} {'-'*10} {'-'*12} {'-'*8} {'-'*12} {'-'*14} {'-'*16}")
 
     grand_total = 0.0
+    grand_volume = 0.0
     for mat in materials:
         sell_price = prices[mat["type_id"]]["sell_min"]
         line_cost = sell_price * mat["adjusted_quantity"]
         grand_total += line_cost
+        total_vol = mat.get("total_volume", 0.0)
+        grand_volume += total_vol
 
         print(
             f"  {mat['name']:<30} "
             f"{mat['base_quantity']:>10,} "
             f"{mat['adjusted_quantity']:>12,} "
             f"{mat['saved']:>8,} "
+            f"{total_vol:>12,.2f} "
             f"{fmt_isk(sell_price):>14} "
             f"{fmt_isk(line_cost):>16}"
         )
 
-    print(f"\n  {'Estimated material cost:':>78} {fmt_isk(grand_total):>16} ISK")
+    print(f"\n  {'Total volume:':>62} {grand_volume:>12,.2f} m³")
+    print(f"  {'Estimated material cost:':>90} {fmt_isk(grand_total):>16} ISK")
 
     base_time = sde.get_activity_time(bp_id, ACTIVITY_MANUFACTURING)
     if base_time:
@@ -356,31 +361,39 @@ def cmd_chain(sde: SDE, args: list[str], structure_bonus: float,
 
     print_tree(tree)
 
-    # Aggregated raw materials with prices
+    # Aggregated raw materials with prices and volumes
     raw_materials = flatten_material_tree(tree)
 
     print(f"\n  Fetching market prices...")
     type_ids = [m["type_id"] for m in raw_materials]
     prices = esi.get_bulk_market_data(type_ids, region_id) if type_ids else {}
+    volumes = sde.get_type_volumes(type_ids) if type_ids else {}
 
-    hdr = f"{'Material':<35} {'Total Needed':>14} {'Jita Sell':>14} {'Total Cost':>16}"
+    hdr = (f"{'Material':<35} {'Total Needed':>14} {'Vol m³':>12}"
+           f" {'Jita Sell':>14} {'Total Cost':>16}")
     print(f"\n  --- Aggregated Raw Materials ---\n")
     print(f"  {hdr}")
-    print(f"  {'-'*35} {'-'*14} {'-'*14} {'-'*16}")
+    print(f"  {'-'*35} {'-'*14} {'-'*12} {'-'*14} {'-'*16}")
 
     grand_total = 0.0
+    grand_volume = 0.0
     for mat in raw_materials:
         sell_price = prices.get(mat["type_id"], {}).get("sell_min", 0.0)
         line_cost = sell_price * mat["quantity"]
         grand_total += line_cost
+        unit_vol = volumes.get(mat["type_id"], 0.0)
+        total_vol = unit_vol * mat["quantity"]
+        grand_volume += total_vol
         print(
             f"  {mat['name']:<35} "
             f"{mat['quantity']:>14,} "
+            f"{total_vol:>12,.2f} "
             f"{fmt_isk(sell_price):>14} "
             f"{fmt_isk(line_cost):>16}"
         )
 
-    print(f"\n  {'Total raw material cost:':>65} {fmt_isk(grand_total):>16} ISK")
+    print(f"\n  {'Total volume:':>63} {grand_volume:>12,.2f} m³")
+    print(f"  {'Total raw material cost:':>77} {fmt_isk(grand_total):>16} ISK")
 
 
 # ------------------------------------------------------------------
@@ -568,13 +581,14 @@ def cmd_shop(p, sde: SDE, character_id: int, args: list[str],
     prices = esi.get_bulk_market_data(type_ids, region_id)
 
     hdr = (f"{'Material':<30} {'Need':>10} {'Have':>10} {'Buy':>10}"
-           f" {'Jita Sell':>14} {'Est. Cost':>16} {'':>6}")
+           f" {'Buy Vol m³':>12} {'Jita Sell':>14} {'Est. Cost':>16} {'':>6}")
     print(f"\n  {hdr}")
     print(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*10}"
-          f" {'-'*14} {'-'*16} {'-'*6}")
+          f" {'-'*12} {'-'*14} {'-'*16} {'-'*6}")
 
     missing_count = 0
     total_buy_cost = 0.0
+    total_buy_volume = 0.0
     for mat in materials:
         needed = mat["adjusted_quantity"]
         have = asset_index.get(mat["type_id"], 0)
@@ -586,12 +600,16 @@ def cmd_shop(p, sde: SDE, character_id: int, args: list[str],
         sell_price = prices[mat["type_id"]]["sell_min"]
         line_cost = sell_price * deficit
         total_buy_cost += line_cost
+        unit_vol = mat.get("volume", 0.0)
+        buy_vol = unit_vol * deficit
+        total_buy_volume += buy_vol
 
         print(
             f"  {mat['name']:<30} "
             f"{needed:>10,} "
             f"{have:>10,} "
             f"{deficit:>10,} "
+            f"{buy_vol:>12,.2f} "
             f"{fmt_isk(sell_price):>14} "
             f"{fmt_isk(line_cost):>16} "
             f"{status:>6}"
@@ -602,7 +620,173 @@ def cmd_shop(p, sde: SDE, character_id: int, args: list[str],
         print("  All materials on hand. Ready to build!")
     else:
         print(f"  Missing {missing_count} material(s). See 'Buy' column above.")
+        print(f"  Total buy volume: {total_buy_volume:,.2f} m³")
         print(f"  Estimated buy cost: {fmt_isk(total_buy_cost)} ISK")
+
+
+def cmd_profit(p, sde: SDE, character_id: int, args: list[str],
+               structure_bonus: float, region_id: int,
+               broker_fee: float, sales_tax: float,
+               material_cost_pct: float):
+    if not args:
+        print("Usage: eve_inventory.py profit <name> [me] [runs]")
+        return
+
+    term = args[0]
+    me = int(args[1]) if len(args) > 1 else 10
+    runs = int(args[2]) if len(args) > 2 else 1
+
+    bp = pick_blueprint(sde, term)
+    if not bp:
+        return
+
+    bp_id = bp["blueprint_type_id"]
+    product_id = bp["product_type_id"]
+
+    # Get product quantity per run (e.g. 100 for ammo, 1 for ships)
+    prod_row = sde.conn.execute(
+        "SELECT quantity FROM industryActivityProducts "
+        "WHERE typeID = ? AND activityID = 1",
+        (bp_id,),
+    ).fetchone()
+    qty_per_run = prod_row["quantity"] if prod_row else 1
+    total_product_qty = qty_per_run * runs
+
+    print(f"\n{'='*100}")
+    print("PROFIT ANALYSIS")
+    print(f"{'='*100}")
+    print(f"\n  Blueprint: {bp['blueprint_name']}")
+    print(f"  Product:   {bp['product_name']} x{total_product_qty}"
+          f" ({runs} run{'s' if runs != 1 else ''}"
+          f"{f', {qty_per_run}/run' if qty_per_run > 1 else ''})")
+    print(f"  ME Level:  {me}")
+    if structure_bonus > 0:
+        print(f"  Structure: -{structure_bonus}% materials")
+    print(f"  Broker:    {broker_fee}%  |  Sales Tax: {sales_tax}%"
+          f"  |  Material Cost Basis: {material_cost_pct:.0f}% of Jita")
+
+    # --- Material cost ---
+    materials = calculate_materials(sde, bp_id, me, runs, structure_bonus)
+    if not materials:
+        print("\n  No manufacturing materials found.")
+        return
+
+    print("  Fetching assets...")
+    assets = esi.fetch_assets(p, character_id)
+    asset_index = esi.build_asset_index(assets)
+
+    print("  Fetching market prices...")
+    mat_type_ids = [mat["type_id"] for mat in materials]
+    all_type_ids = mat_type_ids + [product_id]
+    prices = esi.get_bulk_market_data(all_type_ids, region_id)
+
+    hdr = (f"{'Material':<30} {'Need':>10} {'Have':>10} {'Buy':>10}"
+           f" {'Buy Vol m³':>12} {'Jita Sell':>14} {'Line Cost':>16}")
+    print(f"\n  --- Material Cost ---\n")
+    print(f"  {hdr}")
+    print(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*10}"
+          f" {'-'*12} {'-'*14} {'-'*16}")
+
+    total_owned_cost = 0.0
+    total_buy_cost = 0.0
+    total_buy_volume = 0.0
+    cost_pct = material_cost_pct / 100.0
+
+    for mat in materials:
+        needed = mat["adjusted_quantity"]
+        have = asset_index.get(mat["type_id"], 0)
+        owned_qty = min(have, needed)
+        buy_qty = max(0, needed - have)
+
+        sell_price = prices[mat["type_id"]]["sell_min"]
+        owned_cost = owned_qty * sell_price * cost_pct
+        buy_cost = buy_qty * sell_price
+        line_cost = owned_cost + buy_cost
+        total_owned_cost += owned_cost
+        total_buy_cost += buy_cost
+
+        unit_vol = mat.get("volume", 0.0)
+        buy_vol = unit_vol * buy_qty
+        total_buy_volume += buy_vol
+
+        print(
+            f"  {mat['name']:<30} "
+            f"{needed:>10,} "
+            f"{have:>10,} "
+            f"{buy_qty:>10,} "
+            f"{buy_vol:>12,.2f} "
+            f"{fmt_isk(sell_price):>14} "
+            f"{fmt_isk(line_cost):>16}"
+        )
+
+    material_cost = total_owned_cost + total_buy_cost
+    print(f"\n  {'Materials on hand (at ' + f'{material_cost_pct:.0f}' + '% Jita):':>74}"
+          f" {fmt_isk(total_owned_cost):>16} ISK")
+    print(f"  {'Materials to buy:':>74} {fmt_isk(total_buy_cost):>16} ISK")
+    print(f"  {'Total material cost:':>74} {fmt_isk(material_cost):>16} ISK")
+    print(f"  {'Total buy volume:':>74} {total_buy_volume:>15,.2f} m³")
+
+    # --- Product revenue ---
+    product_data = prices[product_id]
+    sell_min = product_data["sell_min"]
+    buy_max = product_data["buy_max"]
+
+    broker_rate = broker_fee / 100.0
+    tax_rate = sales_tax / 100.0
+
+    # Per unit net: sell order = price * (1 - broker - tax), instant sell = price * (1 - tax)
+    net_sell_unit = sell_min * (1 - broker_rate - tax_rate)
+    net_buy_unit = buy_max * (1 - tax_rate)
+
+    print(f"\n  --- Product Revenue (per unit) ---\n")
+    w = 18  # column width
+    print(f"  {'':30} {'Sell Order':>{w}} {'Instant Sell':>{w}}  ISK")
+    print(f"  {'Market price:':<30} {fmt_isk(sell_min):>{w}} {fmt_isk(buy_max):>{w}}")
+    print(f"  {f'Broker fee ({broker_fee}%):':<30}"
+          f" {'-' + fmt_isk(sell_min * broker_rate):>{w}}"
+          f" {'-':>{w}}")
+    print(f"  {f'Sales tax ({sales_tax}%):':<30}"
+          f" {'-' + fmt_isk(sell_min * tax_rate):>{w}}"
+          f" {'-' + fmt_isk(buy_max * tax_rate):>{w}}")
+    print(f"  {'Net per unit:':<30} {fmt_isk(net_sell_unit):>{w}} {fmt_isk(net_buy_unit):>{w}}")
+
+    # --- Profit summary ---
+    revenue_sell = net_sell_unit * total_product_qty
+    revenue_buy = net_buy_unit * total_product_qty
+
+    profit_sell = revenue_sell - material_cost
+    profit_buy = revenue_buy - material_cost
+
+    margin_sell = (profit_sell / revenue_sell * 100) if revenue_sell > 0 else 0.0
+    margin_buy = (profit_buy / revenue_buy * 100) if revenue_buy > 0 else 0.0
+
+    base_time = sde.get_activity_time(bp_id, ACTIVITY_MANUFACTURING)
+    if base_time:
+        total_time_hrs = (base_time * runs) / 3600.0
+        isk_hr_sell = profit_sell / total_time_hrs if total_time_hrs > 0 else 0.0
+        isk_hr_buy = profit_buy / total_time_hrs if total_time_hrs > 0 else 0.0
+    else:
+        total_time_hrs = None
+        isk_hr_sell = None
+        isk_hr_buy = None
+
+    print(f"\n  --- Profit Summary ({total_product_qty}x {bp['product_name']}) ---\n")
+    print(f"  {'':30} {'Sell Order':>{w}} {'Instant Sell':>{w}}")
+    print(f"  {f'Revenue ({total_product_qty}x):':<30}"
+          f" {fmt_isk(revenue_sell):>{w}} {fmt_isk(revenue_buy):>{w}}  ISK")
+    print(f"  {'Material cost:':<30}"
+          f" {'-' + fmt_isk(material_cost):>{w}} {'-' + fmt_isk(material_cost):>{w}}  ISK")
+    print(f"  {'Profit:':<30}"
+          f" {fmt_isk(profit_sell):>{w}} {fmt_isk(profit_buy):>{w}}  ISK")
+    print(f"  {'Margin:':<30}"
+          f" {margin_sell:>{w - 1}.1f}% {margin_buy:>{w - 1}.1f}%")
+    if isk_hr_sell is not None:
+        print(f"  {'ISK/hr:':<30}"
+              f" {fmt_isk(isk_hr_sell):>{w}} {fmt_isk(isk_hr_buy):>{w}}  ISK")
+
+    if base_time:
+        print(f"\n  Base manufacturing time (per run): {fmt_time(base_time)}"
+              f"  |  Total: {fmt_time(base_time * runs)}")
 
 
 def cmd_summary(p, sde: SDE, character_id: int):
@@ -712,17 +896,22 @@ ESI commands (require auth):
   blueprints                       Blueprints with ME/TE
   jobs                             Industry jobs
   shop <name> [me] [runs]          Shopping list vs assets + prices
+  profit <name> [me] [runs]        Profit analysis (materials vs sell price)
   summary                          Full industry dashboard
 
 Environment:
-  STRUCTURE_BONUS   Structure material bonus % (default: 0)
-  MARKET_REGION     Region ID for prices (default: 10000002 = The Forge/Jita)
+  STRUCTURE_BONUS    Structure material bonus % (default: 0)
+  MARKET_REGION      Region ID for prices (default: 10000002 = The Forge/Jita)
+  BROKER_FEE         Broker fee % for sell orders (default: 1.5)
+  SALES_TAX          Sales tax % (default: 3.6)
+  MATERIAL_COST_PCT  Cost basis for owned materials as % of Jita (default: 100)
 
 Examples:
   python eve_inventory.py materials "Antimatter Charge M" 10 100
   python eve_inventory.py prices tritanium
   python eve_inventory.py chain "Heavy Pulse Laser II" 10 1
   python eve_inventory.py shop drake 10 5
+  python eve_inventory.py profit drake 10 5
   python eve_inventory.py mecomp revelation
   python eve_inventory.py summary
 """
@@ -737,6 +926,9 @@ def main():
     args = sys.argv[2:]
     structure_bonus = float(os.environ.get("STRUCTURE_BONUS", "0"))
     region_id = esi.get_market_region()
+    broker_fee = float(os.environ.get("BROKER_FEE", "1.5"))
+    sales_tax = float(os.environ.get("SALES_TAX", "3.6"))
+    material_cost_pct = float(os.environ.get("MATERIAL_COST_PCT", "100"))
 
     # Auth-only command
     if command == "auth":
@@ -775,6 +967,9 @@ def main():
             cmd_jobs(p, sde, character_id)
         elif command == "shop":
             cmd_shop(p, sde, character_id, args, structure_bonus, region_id)
+        elif command == "profit":
+            cmd_profit(p, sde, character_id, args, structure_bonus, region_id,
+                       broker_fee, sales_tax, material_cost_pct)
         elif command == "summary":
             cmd_summary(p, sde, character_id)
         else:

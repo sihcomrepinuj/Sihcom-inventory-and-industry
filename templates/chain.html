@@ -91,6 +91,7 @@
             <tr>
                 <th>Material</th>
                 <th class="text-right">Total Needed</th>
+                <th class="text-right">Vol m³</th>
                 <th class="text-right">Jita Sell</th>
                 <th class="text-right">Total Cost</th>
             </tr>
@@ -100,6 +101,7 @@
             <tr>
                 <td><a href="/market/{{ mat.type_id }}">{{ mat.name }}</a></td>
                 <td class="text-right">{{ mat.quantity | commas }}</td>
+                <td class="text-right">{{ mat.total_volume | vol }}</td>
                 <td class="text-right">{{ mat.sell_price | isk }}</td>
                 <td class="text-right">{{ mat.line_cost | isk }}</td>
             </tr>
@@ -107,7 +109,9 @@
         </tbody>
         <tfoot>
             <tr>
-                <td colspan="3" class="text-right grand-total">Total Raw Material Cost</td>
+                <td colspan="2" class="text-right grand-total">Total Volume</td>
+                <td class="text-right grand-total">{{ raw_volume | vol }} m³</td>
+                <td class="text-right grand-total">Total Raw Material Cost</td>
                 <td class="text-right grand-total">{{ raw_total | isk }} ISK</td>
             </tr>
         </tfoot>
@@ -123,6 +127,7 @@
             <tr>
                 <th>Material</th>
                 <th class="text-right">Qty</th>
+                <th class="text-right">Vol m³</th>
                 <th class="text-right">Jita Sell</th>
                 <th class="text-right">Est. Cost</th>
             </tr>
@@ -131,7 +136,9 @@
         </tbody>
         <tfoot>
             <tr>
-                <td colspan="3" class="text-right grand-total">Total Est. Cost</td>
+                <td colspan="2" class="text-right grand-total">Total Volume</td>
+                <td class="text-right grand-total" id="shopping-volume">-</td>
+                <td class="text-right grand-total">Total Est. Cost</td>
                 <td class="text-right grand-total" id="shopping-total">-</td>
             </tr>
         </tfoot>
@@ -180,12 +187,14 @@
     // Full tree data from server (JSON)
     const treeData = {{ tree_data | tojson }};
     const prices = {{ prices | tojson }};
+    const volumes = {{ volumes | tojson }};
 
     // Base URL params for links
     const baseParams = 'me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}&sub_me={{ sub_me }}&reactions={{ "1" if resolve_reactions else "0" }}';
 
     function fmtNum(n) { return n.toLocaleString(); }
     function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+    function fmtVol(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
 
     // Collect type_ids that user wants to BUY (unchecked = buy)
     function getBuySet() {
@@ -234,22 +243,28 @@
         tbody.innerHTML = '';
 
         let total = 0;
+        let totalVol = 0;
         for (const item of items) {
             const priceData = prices[String(item.type_id)] || prices[item.type_id] || {};
             const sellPrice = priceData.sell_min || 0;
             const lineCost = sellPrice * item.quantity;
             total += lineCost;
+            const unitVol = volumes[String(item.type_id)] || volumes[item.type_id] || 0;
+            const lineVol = unitVol * item.quantity;
+            totalVol += lineVol;
 
             const tr = document.createElement('tr');
             tr.innerHTML =
                 `<td><a href="/market/${item.type_id}">${item.name}</a></td>` +
                 `<td class="text-right">${fmtNum(item.quantity)}</td>` +
+                `<td class="text-right">${fmtVol(lineVol)}</td>` +
                 `<td class="text-right">${fmtIsk(sellPrice)}</td>` +
                 `<td class="text-right">${fmtIsk(lineCost)}</td>`;
             tbody.appendChild(tr);
         }
 
         document.getElementById('shopping-total').textContent = fmtIsk(total) + ' ISK';
+        document.getElementById('shopping-volume').textContent = fmtVol(totalVol) + ' m³';
 
         // Store current items for multibuy copy
         window._currentShoppingItems = items;
