@@ -69,7 +69,7 @@ def _get_station_list(p: Preston, character_id: int) -> list[dict]:
         station_ids = esi.extract_manufacturing_stations(jobs)
         stations = []
         for sid in station_ids[:10]:
-            name = esi.resolve_location_name(p, sid, "other")
+            name = esi.get_cached_location_name(p, sid, "other")
             stations.append({"id": sid, "name": name})
         return stations
     except Exception:

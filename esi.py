@@ -440,6 +440,10 @@ _price_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 _raw_asset_cache: dict[int, tuple[float, list[dict]]] = {}
 ASSET_CACHE_TTL = 600  # 10 minutes
 
+# {location_id: (timestamp, name)}
+_location_name_cache: dict[int, tuple[float, str]] = {}
+LOCATION_NAME_CACHE_TTL = 3600  # 1 hour — station/structure names rarely change
+
 
 def fetch_market_orders(
     type_id: int,
@@ -595,6 +599,29 @@ def get_cached_location_asset_index(
     """
     assets = _get_cached_raw_assets(p, entity_id, is_corp)
     return build_location_asset_index(assets)
+
+
+def get_cached_location_name(
+    p: Preston,
+    location_id: int,
+    location_type: str = "other",
+) -> str:
+    """Resolve a location ID to a name with a 1-hour TTL cache.
+
+    Station and structure names rarely change, so a long TTL avoids
+    repeated ESI lookups on every page load.
+    """
+    now = _time.monotonic()
+
+    cached = _location_name_cache.get(location_id)
+    if cached is not None:
+        ts, name = cached
+        if now - ts < LOCATION_NAME_CACHE_TTL:
+            return name
+
+    name = resolve_location_name(p, location_id, location_type)
+    _location_name_cache[location_id] = (now, name)
+    return name
 
 
 def prefetch_asset_index(
