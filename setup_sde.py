@@ -115,11 +115,18 @@ def write_converter_config():
 def run_converter():
     """Run Load.py sqlite in the converter directory."""
     print("  Converting YAML to SQLite (this may take a few minutes)...")
+    # Force UTF-8 for the child's stdio: the converter prints Unicode
+    # glyphs that Windows' default cp1252 codec can't encode when stdout
+    # is a pipe rather than a console.
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "Load.py", "sqlite"],
         cwd=CONVERTER_DIR,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=env,
     )
     if result.returncode != 0:
         print(f"  Converter stderr:\n{result.stderr}")
