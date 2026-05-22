@@ -481,6 +481,7 @@ def chain_shopping(bp_id):
     # Location-aware hauling (when build station is selected)
     build_station = request.args.get("location", type=int)
     deficit_data = None
+    loc_names: dict[int, str] = {}
 
     if build_station:
         loc_index = esi.get_cached_location_asset_index(
@@ -493,6 +494,12 @@ def chain_shopping(bp_id):
         deficit_data = calculate_deficit(
             shopping_materials, loc_index, build_station, volumes_for_deficit,
         )
+        # Resolve location IDs in the "Haul (elsewhere)" column to station names
+        elsewhere_ids = {lid for d in deficit_data for lid in d["elsewhere"]}
+        loc_names = {
+            lid: esi.get_cached_location_name(p, lid, "other")
+            for lid in elsewhere_ids
+        }
 
     station_list = _get_station_list(p, character_id)
 
@@ -531,6 +538,7 @@ def chain_shopping(bp_id):
         build_station=build_station,
         station_list=station_list,
         deficit_data=deficit_data,
+        loc_names=loc_names,
     )
 
 
@@ -690,6 +698,7 @@ def shopping(bp_id):
     # Location-aware hauling (when build station is selected)
     build_station = request.args.get("location", type=int)
     deficit_data = None
+    loc_names: dict[int, str] = {}
 
     if build_station:
         loc_index = esi.get_cached_location_asset_index(
@@ -702,6 +711,12 @@ def shopping(bp_id):
              for m in materials],
             loc_index, build_station, volumes,
         )
+        # Resolve location IDs in the "Haul (elsewhere)" column to station names
+        elsewhere_ids = {lid for d in deficit_data for lid in d["elsewhere"]}
+        loc_names = {
+            lid: esi.get_cached_location_name(p, lid, "other")
+            for lid in elsewhere_ids
+        }
 
     # Always fetch station list for the dropdown (if logged in)
     station_list = _get_station_list(p, character_id)
@@ -736,6 +751,7 @@ def shopping(bp_id):
         build_station=build_station,
         station_list=station_list,
         deficit_data=deficit_data,
+        loc_names=loc_names,
     )
 
 

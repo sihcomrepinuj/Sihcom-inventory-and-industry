@@ -143,9 +143,9 @@
                 {% set haul_total = d.elsewhere.values() | sum %}
                 {% if haul_total > 0 %}
                     {{ haul_total | commas }}
-                    <small class="text-muted">
-                        ({% for loc_id, qty in d.elsewhere.items() %}{{ qty | commas }}{% if not loop.last %}, {% endif %}{% endfor %})
-                    </small>
+                    {% for loc_id, qty in d.elsewhere.items() %}
+                        <br><small class="text-muted">{{ loc_names.get(loc_id, loc_id) }}: {{ qty | commas }}</small>
+                    {% endfor %}
                 {% else %}
                     0
                 {% endif %}
