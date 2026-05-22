@@ -224,8 +224,53 @@ def verify_sde():
 
 
 # Keep these names for backwards compatibility with app.py imports
+CONVERTER_REPO_URL = "https://github.com/noirsoldats/eve-sde-converter.git"
+
+
+def ensure_converter():
+    """Ensure tools/eve-sde-converter/ is populated.
+
+    On environments where the git submodule isn't initialized (e.g.,
+    Railway, which clones the main repo without --recurse-submodules),
+    bootstrap by running git submodule update; fall back to a direct
+    clone if that doesn't work (e.g., .git/ stripped from the image).
+    """
+    load_py = os.path.join(CONVERTER_DIR, "Load.py")
+    if os.path.exists(load_py):
+        return
+
+    print("  Converter source missing — initializing submodule...", flush=True)
+    sub = subprocess.run(
+        ["git", "submodule", "update", "--init", "--recursive", "tools/eve-sde-converter"],
+        cwd=PROJECT_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if sub.returncode == 0 and os.path.exists(load_py):
+        print("  Submodule initialized.")
+        return
+
+    print(f"  Submodule init failed (rc={sub.returncode}); cloning directly...", flush=True)
+    os.makedirs(os.path.dirname(CONVERTER_DIR), exist_ok=True)
+    if os.path.exists(CONVERTER_DIR):
+        shutil.rmtree(CONVERTER_DIR)
+    clone = subprocess.run(
+        ["git", "clone", "--depth", "1", CONVERTER_REPO_URL, CONVERTER_DIR],
+        capture_output=True,
+        text=True,
+    )
+    if clone.returncode != 0 or not os.path.exists(load_py):
+        raise RuntimeError(
+            f"Could not obtain eve-sde-converter source.\n"
+            f"submodule stderr: {sub.stderr}\n"
+            f"clone stderr: {clone.stderr}"
+        )
+    print("  Converter cloned.")
+
+
 def build_database():
-    """Full pipeline: download, extract, convert, install, record build."""
+    """Full pipeline: bootstrap converter, download, extract, convert, install, record build."""
+    ensure_converter()
     build = get_latest_build()
     zip_path = download_sde(build)
     extract_sde(zip_path)

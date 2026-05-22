@@ -4,7 +4,10 @@ preston>=4.12
 requests>=2.31
 pytest>=8.0
 
-# eve-sde-converter (submodule) needs its own dependencies installed so
-# that setup_sde.py's subprocess call to Load.py can import sqlalchemy,
-# yaml, tqdm, etc. -r pulls them in declaratively.
--r tools/eve-sde-converter/requirements.txt
+# eve-sde-converter (run as a subprocess by setup_sde.py) needs these.
+# The converter's own requirements.txt lists many more libraries (numpy,
+# openpyxl, psycopg2-binary, pymssql, etc.) but those are for unused
+# export scripts — the tableloader code that runs during SQLite
+# conversion only imports sqlalchemy, yaml, and requests.
+sqlalchemy>=2.0
+pyyaml>=6.0
