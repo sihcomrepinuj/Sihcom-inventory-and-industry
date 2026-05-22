@@ -3,3 +3,8 @@ gunicorn>=21.2
 preston>=4.12
 requests>=2.31
 pytest>=8.0
+
+# eve-sde-converter (submodule) needs its own dependencies installed so
+# that setup_sde.py's subprocess call to Load.py can import sqlalchemy,
+# yaml, tqdm, etc. -r pulls them in declaratively.
+-r tools/eve-sde-converter/requirements.txt

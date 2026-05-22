@@ -167,7 +167,13 @@ def run_converter():
     )
     if result.returncode != 0:
         print(f"  Converter stderr:\n{result.stderr}")
-        raise RuntimeError(f"eve-sde-converter failed with return code {result.returncode}")
+        # Include the tail of stderr in the exception so failures are
+        # diagnosable from the app's error page without combing logs.
+        tail = (result.stderr or "").strip().splitlines()[-10:]
+        snippet = "\n".join(tail) if tail else "(no stderr)"
+        raise RuntimeError(
+            f"eve-sde-converter failed (exit {result.returncode}):\n{snippet}"
+        )
     print("  Conversion complete.")
 
 
