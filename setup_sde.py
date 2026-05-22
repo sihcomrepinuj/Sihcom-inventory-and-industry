@@ -30,10 +30,47 @@ import requests
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 SDE_DB = os.path.join(DATA_DIR, "sqlite-latest.sqlite")
+BUILD_FILE = os.path.join(DATA_DIR, "sde-build.txt")
 CONVERTER_DIR = os.path.join(PROJECT_DIR, "tools", "eve-sde-converter")
 SDE_WORK_DIR = os.path.join(CONVERTER_DIR, "sde")
 
 CCP_BASE_URL = "https://developers.eveonline.com/static-data/tranquility"
+
+
+def read_local_build() -> str | None:
+    """Read the SDE build number we last installed. None if unknown."""
+    if not os.path.exists(BUILD_FILE):
+        return None
+    try:
+        with open(BUILD_FILE) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def write_local_build(build: str) -> None:
+    """Record the SDE build number alongside the database."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(BUILD_FILE, "w") as f:
+        f.write(str(build))
+
+
+def is_sde_current() -> bool:
+    """Return True if the local SDE matches CCP's latest build.
+
+    Fails open: if CCP is unreachable or the local build is unknown
+    but the SDE file exists, returns True for the network-error case
+    (don't block startup on transient errors) and False for the
+    unknown-local case (force a refresh once so we get on the tracker).
+    """
+    local = read_local_build()
+    try:
+        latest = get_latest_build()
+    except Exception:
+        return True  # network error — use whatever's on disk
+    if local is None:
+        return False  # unknown local build → refresh once to record it
+    return local == latest
 
 
 def get_latest_build() -> str:
@@ -182,13 +219,14 @@ def verify_sde():
 
 # Keep these names for backwards compatibility with app.py imports
 def build_database():
-    """Full pipeline: download, extract, convert, install."""
+    """Full pipeline: download, extract, convert, install, record build."""
     build = get_latest_build()
     zip_path = download_sde(build)
     extract_sde(zip_path)
     write_converter_config()
     run_converter()
     install_database()
+    write_local_build(build)
 
 
 def download_sde_compat():
