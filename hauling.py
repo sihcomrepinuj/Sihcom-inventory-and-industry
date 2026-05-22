@@ -1,10 +1,59 @@
 """
-hauling.py — Deficit calculation for location-aware shopping lists.
-
-Given a list of needed materials, a location-aware asset index, and a
-build station ID, calculates what's at the station, what needs to be
-hauled from elsewhere, and what needs to be bought.
+hauling.py — Deficit calculation for location-aware shopping lists,
+and build-capacity projection from stockpile against per-run materials.
 """
+
+
+def calculate_build_capacity(
+    materials: list[dict],
+    asset_index: dict[int, int],
+) -> dict:
+    """
+    Project a stockpile against per-run materials to find build capacity.
+
+    Args:
+        materials: List of {type_id, name, quantity} representing the
+            materials required for ONE RUN at the desired ME. Caller
+            chooses whether to flatten the chain to raw materials or
+            stop at direct components.
+        asset_index: {type_id: owned_qty} — flat asset index.
+
+    Returns:
+        {
+            "capacity_runs": int | None,  # None when materials is empty
+                                          # or every material has zero need
+            "constraints": [
+                {type_id, name, owned, per_run, max_runs}, ...
+            ]  # sorted ascending by max_runs (tightest first)
+        }
+
+    Notes:
+        Materials with quantity <= 0 are skipped (don't constrain capacity).
+        Materials missing from asset_index are treated as owned=0.
+    """
+    constraints = []
+    for mat in materials:
+        per_run = mat["quantity"]
+        if per_run <= 0:
+            continue
+        owned = asset_index.get(mat["type_id"], 0)
+        max_runs = owned // per_run
+        constraints.append({
+            "type_id": mat["type_id"],
+            "name": mat["name"],
+            "owned": owned,
+            "per_run": per_run,
+            "max_runs": max_runs,
+        })
+
+    if not constraints:
+        return {"capacity_runs": None, "constraints": []}
+
+    constraints.sort(key=lambda c: c["max_runs"])
+    return {
+        "capacity_runs": constraints[0]["max_runs"],
+        "constraints": constraints,
+    }
 
 
 def calculate_deficit(
