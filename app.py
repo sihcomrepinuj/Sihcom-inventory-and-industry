@@ -190,22 +190,38 @@ def _sde_is_valid(path: str) -> bool:
 
 
 def ensure_sde_downloaded():
-    """Download and convert the CCP YAML SDE if it doesn't exist or is corrupt."""
+    """Ensure an SDE is present, valid, and up-to-date with CCP's latest build.
+
+    Decisions:
+      - Missing or corrupt SDE → full download + convert.
+      - Present and valid, but build mismatch vs CCP's latest → refresh.
+      - Present and valid, but build unknown (no sidecar) → refresh once
+        so the build sidecar gets written.
+      - CCP unreachable → use whatever's on disk (don't block startup).
+    """
     from sde import DEFAULT_SDE_PATH
+    from setup_sde import build_database, is_sde_current, read_local_build
     logger.info(f"Checking for SDE at: {DEFAULT_SDE_PATH}")
 
-    if os.path.exists(DEFAULT_SDE_PATH):
-        if _sde_is_valid(DEFAULT_SDE_PATH):
-            logger.info("SDE found and valid.")
-            return
-        else:
-            logger.warning("SDE file is corrupt — deleting and re-downloading...")
-            os.remove(DEFAULT_SDE_PATH)
+    sde_present = os.path.exists(DEFAULT_SDE_PATH)
+    if sde_present and not _sde_is_valid(DEFAULT_SDE_PATH):
+        logger.warning("SDE file is corrupt — deleting and re-downloading...")
+        os.remove(DEFAULT_SDE_PATH)
+        sde_present = False
 
-    logger.info("Downloading CCP YAML SDE and converting to SQLite...")
-    from setup_sde import build_database
+    if sde_present and is_sde_current():
+        logger.info(f"SDE found and current (build {read_local_build()}).")
+        return
+
+    if sde_present:
+        logger.info(
+            "SDE present but outdated (local build %s) — refreshing...",
+            read_local_build() or "unknown",
+        )
+    else:
+        logger.info("No SDE on disk — downloading CCP YAML SDE...")
     build_database()
-    logger.info("SDE ready.")
+    logger.info(f"SDE ready (build {read_local_build()}).")
 
 
 # ------------------------------------------------------------------
