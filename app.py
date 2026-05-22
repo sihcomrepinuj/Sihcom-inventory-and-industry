@@ -24,7 +24,7 @@ from sde import (
     MaterialNode,
 )
 import esi
-from hauling import calculate_deficit
+from hauling import calculate_build_capacity, calculate_deficit
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -56,6 +56,65 @@ def get_cached_chain(sde, bp_id, me, runs, structure_bonus, sub_me, resolve_reac
 
     _chain_cache[key] = (tree, raw_materials, summary)
     return tree, raw_materials, summary
+
+
+def _compute_capacity_bundle(
+    sde, p: Preston, bp_id: int, me: int, structure_bonus: float,
+    character_id: int, corporation_id: int | None,
+) -> dict | None:
+    """Compute build-capacity bundle for the blueprint page widget.
+
+    Resolves the chain at runs=1 to get per-run raw materials, then
+    projects them against the stockpile (corp assets if available,
+    else personal). Returns None if anything goes wrong or there's
+    nothing useful to show — the widget renders nothing in that case.
+    """
+    try:
+        if corporation_id:
+            asset_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+            source = "corp"
+        else:
+            asset_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+            source = "personal"
+
+        if not asset_index:
+            return None
+
+        # Resolve chain at runs=1 → per-run raw materials.
+        # ME rounding at each level can introduce minor compounding vs
+        # resolving at the user's actual runs setting, but for capacity
+        # estimation the difference is rounding-level.
+        _, raw_materials, _ = get_cached_chain(
+            sde, bp_id, me, runs=1, structure_bonus=structure_bonus,
+            sub_me=10, resolve_reactions=True,
+        )
+        if not raw_materials:
+            return None
+
+        capacity = calculate_build_capacity(raw_materials, asset_index)
+        if capacity["capacity_runs"] is None:
+            return None
+
+        product_id = sde.find_product_for_blueprint(bp_id)
+        product_name = sde.get_type_name(product_id) if product_id else "unit"
+        prod_row = sde.conn.execute(
+            "SELECT quantity FROM industryActivityProducts "
+            "WHERE typeID = ? AND activityID = 1",
+            (bp_id,),
+        ).fetchone()
+        qty_per_run = prod_row["quantity"] if prod_row else 1
+
+        return {
+            "capacity_runs": capacity["capacity_runs"],
+            "capacity_units": capacity["capacity_runs"] * qty_per_run,
+            "qty_per_run": qty_per_run,
+            "product_name": product_name,
+            "source": source,
+            "constraints": capacity["constraints"][:3],
+        }
+    except Exception:
+        logger.debug("Capacity computation failed", exc_info=True)
+        return None
 
 
 def _get_station_list(p: Preston, character_id: int) -> list[dict]:
@@ -283,6 +342,17 @@ def blueprint(bp_id):
         if invention_products else []
     )
 
+    capacity = None
+    p = get_authed_preston_from_session()
+    if p:
+        character_id = int(session["character_id"])
+        corporation_id = session.get("corporation_id")
+        capacity = _compute_capacity_bundle(
+            sde, p, bp_id, me, structure_bonus,
+            character_id, corporation_id,
+        )
+        session["refresh_token"] = p.refresh_token
+
     return render_template(
         "blueprint.html",
         bp_id=bp_id, bp_name=bp_name, product_name=product_name,
@@ -292,6 +362,7 @@ def blueprint(bp_id):
         invention_products=invention_products,
         invention_materials=invention_materials,
         character_name=session.get("character_name"),
+        capacity=capacity,
     )
 
 
@@ -340,7 +411,23 @@ def api_materials(bp_id):
             grand_total += mat["line_cost"]
             grand_volume += mat.get("total_volume", 0.0)
 
-    return jsonify(materials=materials, grand_total=grand_total, grand_volume=grand_volume)
+    capacity = None
+    p = get_authed_preston_from_session()
+    if p:
+        character_id = int(session["character_id"])
+        corporation_id = session.get("corporation_id")
+        capacity = _compute_capacity_bundle(
+            sde, p, bp_id, me, structure_bonus,
+            character_id, corporation_id,
+        )
+        session["refresh_token"] = p.refresh_token
+
+    return jsonify(
+        materials=materials,
+        grand_total=grand_total,
+        grand_volume=grand_volume,
+        capacity=capacity,
+    )
 
 
 # ------------------------------------------------------------------

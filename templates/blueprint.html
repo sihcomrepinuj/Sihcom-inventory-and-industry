@@ -2,6 +2,24 @@
 {% block title %}{{ product_name }} — Materials{% endblock %}
 
 {% block content %}
+<style>
+.capacity-card {
+    border: 1px solid var(--pico-card-border-color, var(--pico-muted-border-color));
+    border-radius: var(--pico-border-radius);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    background: var(--pico-card-background-color, transparent);
+}
+.capacity-card .capacity-status { margin: 0 0 0.25rem; font-weight: 500; }
+.capacity-card .status-ok { color: var(--pico-ins-color); }
+.capacity-card .status-warn { color: var(--pico-del-color); }
+.capacity-card .capacity-meta { font-size: 0.85em; color: var(--pico-muted-color); margin: 0 0 0.25rem; }
+.capacity-card .capacity-num { margin: 0.25rem 0 0.5rem; }
+.capacity-card .constraints-table { font-size: 0.9em; margin-bottom: 0.25rem; }
+.capacity-card .constraints-table td, .capacity-card .constraints-table th { padding: 0.25rem 0.5rem; }
+.capacity-card .capacity-link { margin: 0.25rem 0 0; font-size: 0.9em; }
+</style>
+
 <hgroup>
     <h2>{{ product_name }}</h2>
     <p>{{ bp_name }}</p>
@@ -26,6 +44,49 @@
     </label>
     <noscript><button type="submit">Update</button></noscript>
 </form>
+
+{% if capacity %}
+<div class="capacity-card" id="capacity-card"
+     data-runs="{{ runs }}" data-qty-per-run="{{ capacity.qty_per_run }}"
+     data-product-name="{{ capacity.product_name }}"
+     data-source="{{ capacity.source }}" data-bp-id="{{ bp_id }}"
+     data-me="{{ me }}" data-structure-bonus="{{ structure_bonus }}">
+    {% set wanted = runs * capacity.qty_per_run %}
+    {% set surplus = capacity.capacity_units - wanted %}
+    <p class="capacity-status" id="capacity-status">
+        {% if surplus >= 0 %}
+            <span class="status-ok">✓ Enough for your {{ wanted | commas }} {{ capacity.product_name }}{% if surplus > 0 %} ({{ surplus | commas }} to spare){% endif %}</span>
+        {% else %}
+            <span class="status-warn">⚠ Short by {{ (-surplus) | commas }} {{ capacity.product_name }} (have for {{ capacity.capacity_units | commas }} of {{ wanted | commas }})</span>
+        {% endif %}
+    </p>
+    <p class="capacity-meta">{{ capacity.source }} assets · raw materials only</p>
+    <h3 class="capacity-num" id="capacity-num">{{ capacity.capacity_units | commas }} {{ capacity.product_name }}</h3>
+    <table class="constraints-table" id="constraints-table">
+        <thead>
+            <tr>
+                <th>Tightest constraints</th>
+                <th class="text-right">Owned</th>
+                <th class="text-right">Per run</th>
+                <th class="text-right">→ Units</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in capacity.constraints %}
+            <tr>
+                <td><a href="/market/{{ c.type_id }}">{{ c.name }}</a></td>
+                <td class="text-right">{{ c.owned | commas }}</td>
+                <td class="text-right">{{ c.per_run | commas }}</td>
+                <td class="text-right">{{ (c.max_runs * capacity.qty_per_run) | commas }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="capacity-link" id="capacity-link" {% if surplus >= 0 %}hidden{% endif %}>
+        <a href="/shopping/{{ bp_id }}?me={{ me }}&runs={{ runs }}&structure_bonus={{ structure_bonus }}">Shopping List has buy quantities →</a>
+    </p>
+</div>
+{% endif %}
 
 {% if materials %}
 <table id="materials-table">
@@ -119,10 +180,48 @@
     structInput.addEventListener('input', scheduleUpdate);
 
     const grandVolume = document.getElementById('grand-volume');
+    const capacityCard = document.getElementById('capacity-card');
 
     function fmtNum(n) { return n.toLocaleString(); }
     function fmtIsk(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
     function fmtVol(n) { return n === 0 ? '-' : n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+    function renderCapacity(cap) {
+        if (!capacityCard || !cap) return;
+        const runs = parseInt(runsInput.value || 1, 10);
+        const wanted = runs * cap.qty_per_run;
+        const surplus = cap.capacity_units - wanted;
+        const name = cap.product_name;
+
+        const status = document.getElementById('capacity-status');
+        if (surplus >= 0) {
+            const tail = surplus > 0 ? ` (${fmtNum(surplus)} to spare)` : '';
+            status.innerHTML = `<span class="status-ok">✓ Enough for your ${fmtNum(wanted)} ${name}${tail}</span>`;
+        } else {
+            status.innerHTML = `<span class="status-warn">⚠ Short by ${fmtNum(-surplus)} ${name} (have for ${fmtNum(cap.capacity_units)} of ${fmtNum(wanted)})</span>`;
+        }
+
+        const num = document.getElementById('capacity-num');
+        num.textContent = `${fmtNum(cap.capacity_units)} ${name}`;
+
+        const tbody = document.querySelector('#constraints-table tbody');
+        tbody.innerHTML = '';
+        for (const c of cap.constraints) {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                `<td><a href="/market/${c.type_id}">${c.name}</a></td>` +
+                `<td class="text-right">${fmtNum(c.owned)}</td>` +
+                `<td class="text-right">${fmtNum(c.per_run)}</td>` +
+                `<td class="text-right">${fmtNum(c.max_runs * cap.qty_per_run)}</td>`;
+            tbody.appendChild(tr);
+        }
+
+        const link = document.getElementById('capacity-link');
+        link.hidden = surplus >= 0;
+        const sb = structInput.value || 0;
+        link.querySelector('a').href =
+            `/shopping/${bpId}?me=${meSelect.value}&runs=${runs}&structure_bonus=${sb}`;
+    }
 
     function updateLinks() {
         const me = meSelect.value;
@@ -162,6 +261,8 @@
                 });
                 grandTotal.textContent = fmtIsk(data.grand_total) + ' ISK';
                 if (grandVolume) grandVolume.textContent = fmtVol(totalVol) + ' m³';
+
+                renderCapacity(data.capacity);
 
                 // Update ME label in header
                 const th = document.querySelector('#materials-table thead th:nth-child(3)');
