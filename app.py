@@ -190,36 +190,36 @@ def _sde_is_valid(path: str) -> bool:
 
 
 def ensure_sde_downloaded():
-    """Ensure an SDE is present, valid, and up-to-date with CCP's latest build.
+    """Ensure an SDE is present and valid.
 
-    Decisions:
-      - Missing or corrupt SDE → full download + convert.
-      - Present and valid, but build mismatch vs CCP's latest → refresh.
-      - Present and valid, but build unknown (no sidecar) → refresh once
-        so the build sidecar gets written.
-      - CCP unreachable → use whatever's on disk (don't block startup).
+    On Railway the SDE is baked into the image during the build phase
+    (see nixpacks.toml) — we just need to confirm it survived. We do
+    NOT auto-refresh on stale because the converter requires ~2-3 GB
+    of RAM and gets OOM-killed in Railway's runtime container. To
+    refresh, push a code change or click "Redeploy" in Railway so the
+    build phase runs again.
+
+    A stale build is logged as a warning but doesn't block startup.
     """
     from sde import DEFAULT_SDE_PATH
     from setup_sde import build_database, is_sde_current, read_local_build
     logger.info(f"Checking for SDE at: {DEFAULT_SDE_PATH}")
 
-    sde_present = os.path.exists(DEFAULT_SDE_PATH)
-    if sde_present and not _sde_is_valid(DEFAULT_SDE_PATH):
+    if os.path.exists(DEFAULT_SDE_PATH):
+        if _sde_is_valid(DEFAULT_SDE_PATH):
+            local = read_local_build()
+            if local and not is_sde_current():
+                logger.warning(
+                    f"SDE build {local} is older than CCP's latest. "
+                    "Redeploy to refresh."
+                )
+            else:
+                logger.info(f"SDE found and valid (build {local or 'unknown'}).")
+            return
         logger.warning("SDE file is corrupt — deleting and re-downloading...")
         os.remove(DEFAULT_SDE_PATH)
-        sde_present = False
 
-    if sde_present and is_sde_current():
-        logger.info(f"SDE found and current (build {read_local_build()}).")
-        return
-
-    if sde_present:
-        logger.info(
-            "SDE present but outdated (local build %s) — refreshing...",
-            read_local_build() or "unknown",
-        )
-    else:
-        logger.info("No SDE on disk — downloading CCP YAML SDE...")
+    logger.info("No SDE on disk — downloading CCP YAML SDE...")
     build_database()
     logger.info(f"SDE ready (build {read_local_build()}).")
 
@@ -307,6 +307,27 @@ def vol_filter(value):
 # ------------------------------------------------------------------
 # Routes — public
 # ------------------------------------------------------------------
+
+@app.route("/sde-info")
+def sde_info():
+    """Diagnostic: which SDE build is the live instance serving."""
+    from setup_sde import read_local_build, get_latest_build
+    sde = get_sde()
+    info = {
+        "local_build": read_local_build(),
+        "invTypes_rows": sde.conn.execute("SELECT COUNT(*) FROM invTypes").fetchone()[0],
+        "industryActivityMaterials_rows": sde.conn.execute(
+            "SELECT COUNT(*) FROM industryActivityMaterials"
+        ).fetchone()[0],
+    }
+    try:
+        info["latest_ccp_build"] = get_latest_build()
+        info["is_current"] = info["local_build"] == info["latest_ccp_build"]
+    except Exception as e:
+        info["latest_ccp_build"] = f"error: {e}"
+        info["is_current"] = None
+    return jsonify(info)
+
 
 @app.route("/")
 def index():

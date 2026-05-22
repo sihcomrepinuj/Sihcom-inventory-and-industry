@@ -1,0 +1,19 @@
+# Build-time SDE conversion.
+#
+# Railway's runtime container is too small to hold the CCP YAML SDE in
+# memory during conversion (the converter peaks at ~2-3 GB and gets
+# OOM-killed). The build runner has more memory, so we do the work
+# there and bake the resulting SQLite file into the image. Side effect:
+# auto-refresh on cold start no longer applies — push a code change
+# (or click "Redeploy" in Railway) when you want a fresh SDE.
+
+[phases.setup]
+# Make sure the eve-sde-converter submodule is checked out before
+# install/build phases run.
+cmds = ["git submodule update --init --recursive"]
+
+[phases.build]
+# After pip install has provided sqlalchemy + pyyaml, build the SDE.
+# SDE_FORCE_REFRESH=1 keeps setup_sde.py non-interactive in case a
+# stale SDE somehow lingered from a cached layer.
+cmds = ["SDE_FORCE_REFRESH=1 python setup_sde.py"]

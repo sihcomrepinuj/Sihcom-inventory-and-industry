@@ -316,14 +316,12 @@ def main():
     print("EVE Online SDE Setup (CCP YAML -> SQLite)")
     print("=" * 60)
 
-    if not os.path.exists(os.path.join(CONVERTER_DIR, "Load.py")):
-        print(
-            f"\nERROR: eve-sde-converter not found at {CONVERTER_DIR}\n"
-            "Run: git submodule update --init --recursive"
-        )
-        sys.exit(1)
+    # build_database() will call ensure_converter() and bootstrap the
+    # source if needed, so we no longer error out when the submodule
+    # isn't initialized — this is the path Railway's build phase uses.
 
-    if os.path.exists(SDE_DB):
+    force = os.environ.get("SDE_FORCE_REFRESH") == "1" or "--yes" in sys.argv
+    if os.path.exists(SDE_DB) and not force:
         print(f"\nExisting SDE found at {SDE_DB}")
         resp = input("Re-download and replace? [y/N]: ").strip().lower()
         if resp != "y":
