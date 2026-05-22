@@ -17,12 +17,16 @@ It will:
 """
 
 import configparser
+import io
 import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tarfile
+import tempfile
+import urllib.request
 import zipfile
 
 import requests
@@ -224,48 +228,70 @@ def verify_sde():
 
 
 # Keep these names for backwards compatibility with app.py imports
-CONVERTER_REPO_URL = "https://github.com/noirsoldats/eve-sde-converter.git"
+# Pinned to match the SHA committed in our .gitmodules — keep in sync
+# when bumping the submodule via `git submodule update --remote`.
+CONVERTER_REPO = "noirsoldats/eve-sde-converter"
+CONVERTER_PINNED_SHA = "f1f03f3d4ae7c000994e8646e411b461f6ed7811"
 
 
 def ensure_converter():
     """Ensure tools/eve-sde-converter/ is populated.
 
-    On environments where the git submodule isn't initialized (e.g.,
-    Railway, which clones the main repo without --recurse-submodules),
-    bootstrap by running git submodule update; fall back to a direct
-    clone if that doesn't work (e.g., .git/ stripped from the image).
+    Tries the git submodule path first (fast, works locally and in any
+    env that has both git and a real .git/ directory). Falls back to a
+    GitHub tarball download via stdlib urllib + tarfile so we don't
+    depend on git being installed at runtime — Railway's runtime image
+    strips git.
     """
     load_py = os.path.join(CONVERTER_DIR, "Load.py")
     if os.path.exists(load_py):
         return
 
-    print("  Converter source missing — initializing submodule...", flush=True)
-    sub = subprocess.run(
-        ["git", "submodule", "update", "--init", "--recursive", "tools/eve-sde-converter"],
-        cwd=PROJECT_DIR,
-        capture_output=True,
-        text=True,
-    )
-    if sub.returncode == 0 and os.path.exists(load_py):
-        print("  Submodule initialized.")
-        return
+    git = shutil.which("git")
+    if git and os.path.isdir(os.path.join(PROJECT_DIR, ".git")):
+        print("  Converter source missing — initializing submodule...", flush=True)
+        sub = subprocess.run(
+            [git, "submodule", "update", "--init", "--recursive", "tools/eve-sde-converter"],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if sub.returncode == 0 and os.path.exists(load_py):
+            print("  Submodule initialized.")
+            return
+        print(
+            f"  Submodule init failed (rc={sub.returncode}); falling back to tarball.",
+            flush=True,
+        )
 
-    print(f"  Submodule init failed (rc={sub.returncode}); cloning directly...", flush=True)
+    print(
+        f"  Fetching converter tarball ({CONVERTER_PINNED_SHA[:7]})...",
+        flush=True,
+    )
+    url = f"https://github.com/{CONVERTER_REPO}/archive/{CONVERTER_PINNED_SHA}.tar.gz"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            tarball = resp.read()
+    except Exception as e:
+        raise RuntimeError(f"Failed to download converter tarball from {url}: {e}")
+
     os.makedirs(os.path.dirname(CONVERTER_DIR), exist_ok=True)
     if os.path.exists(CONVERTER_DIR):
         shutil.rmtree(CONVERTER_DIR)
-    clone = subprocess.run(
-        ["git", "clone", "--depth", "1", CONVERTER_REPO_URL, CONVERTER_DIR],
-        capture_output=True,
-        text=True,
-    )
-    if clone.returncode != 0 or not os.path.exists(load_py):
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tf:
+            tf.extractall(tmp)
+        # GitHub archive tarballs wrap everything in <repo>-<sha>/
+        entries = os.listdir(tmp)
+        if len(entries) != 1:
+            raise RuntimeError(f"Unexpected tarball layout: {entries}")
+        shutil.move(os.path.join(tmp, entries[0]), CONVERTER_DIR)
+
+    if not os.path.exists(load_py):
         raise RuntimeError(
-            f"Could not obtain eve-sde-converter source.\n"
-            f"submodule stderr: {sub.stderr}\n"
-            f"clone stderr: {clone.stderr}"
+            f"Tarball extracted but Load.py still missing at {load_py}"
         )
-    print("  Converter cloned.")
+    print("  Converter source ready.")
 
 
 def build_database():
