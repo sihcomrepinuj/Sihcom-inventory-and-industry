@@ -1,11 +1,20 @@
 {
   "$schema": "https://schema.railpack.com",
   "steps": {
-    "install": {
+    "build": {
+      "inputs": [
+        {"step": "install"},
+        {"local": true, "include": ["."]}
+      ],
       "commands": [
-        "...",
         "SDE_FORCE_REFRESH=1 python setup_sde.py"
       ]
     }
+  },
+  "deploy": {
+    "inputs": [
+      "...",
+      {"step": "build", "include": ["data"]}
+    ]
   }
 }
