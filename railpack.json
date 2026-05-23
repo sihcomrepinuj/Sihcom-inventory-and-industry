@@ -4,7 +4,6 @@
     "install": {
       "commands": [
         "...",
-        "git submodule update --init --recursive",
         "SDE_FORCE_REFRESH=1 python setup_sde.py"
       ]
     }
