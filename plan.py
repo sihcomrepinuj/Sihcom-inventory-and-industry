@@ -13,7 +13,7 @@ class Target:
     name: str
     blueprint_type_id: int | None
     needed: int                 # units of the product wanted (runs * qty_per_run)
-    children: list             # list[MaterialNode] — the product's direct inputs
+    children: list  # list[MaterialNode] — the product's direct inputs
 
 
 @dataclass
@@ -34,6 +34,7 @@ def _accumulate(graph, type_id, name, qty, blueprint_type_id,
         node = ReqNode(type_id=type_id, name=name)
         graph[type_id] = node
     node.total_needed += qty
+    # Metadata (name, blueprint, activity, terminal) is identical for a given type_id wherever it appears, so last-write-wins is equivalent to first-write.
     node.name = name
     node.blueprint_type_id = blueprint_type_id
     node.activity_id = activity_id
@@ -52,7 +53,7 @@ def _walk(graph, mat_node):
         _walk(graph, child)
 
 
-def merge_trees(targets):
+def merge_trees(targets) -> dict[int, "ReqNode"]:
     graph = {}
     for t in targets:
         _accumulate(

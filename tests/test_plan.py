@@ -40,3 +40,17 @@ def test_merge_sums_shared_intermediate():
     assert graph[34].total_needed == 180        # 100 + 80
     assert set(graph[671].direct_inputs) == {1}
     assert set(graph[17636].direct_inputs) == {1}
+
+
+def test_merge_diamond_within_single_tree():
+    # Product <- CompA (needs 10 Trit) and CompB (needs 5 Trit); Trit shared.
+    comp_a = _node(2, "CompA", 1, terminal=False,
+                   children=[_node(34, "Tritanium", 10, terminal=True)], bp=1001)
+    comp_b = _node(3, "CompB", 1, terminal=False,
+                   children=[_node(34, "Tritanium", 5, terminal=True)], bp=1002)
+    graph = plan.merge_trees([
+        plan.Target(671, "Revelation", 2001, 1, [comp_a, comp_b]),
+    ])
+    assert graph[34].total_needed == 15          # 10 + 5 from both branches
+    assert graph[34].is_terminal is True
+    assert set(graph[671].direct_inputs) == {2, 3}
