@@ -6,8 +6,7 @@
 
 <form method="post" action="{{ url_for('build_list_add') }}" class="controls">
     <label>Type ID <input type="number" name="type_id" required></label>
-    <label>Qty <input type="number" name="qty" value="1"></label>
-    <label>Runs <input type="number" name="runs" value="1"></label>
+    <label>Qty (units to build) <input type="number" name="qty" value="1"></label>
     <label>ME <input type="number" name="me" value="10"></label>
     <label>Structure bonus <input type="number" step="0.01" name="structure_bonus" value="0"></label>
     <button type="submit">Add</button>
@@ -16,7 +15,7 @@
 {% if targets %}
 <table>
     <thead>
-        <tr><th>Item</th><th>Type ID</th><th>Qty</th><th>Runs</th><th>ME</th><th></th></tr>
+        <tr><th>Item</th><th>Type ID</th><th>Qty</th><th>ME</th><th></th></tr>
     </thead>
     <tbody>
     {% for t in targets %}
@@ -24,7 +23,6 @@
             <td>{{ t.name }}</td>
             <td>{{ t.type_id }}</td>
             <td>{{ t.qty }}</td>
-            <td>{{ t.runs }}</td>
             <td>{{ t.me }}</td>
             <td>
                 <form method="post" action="{{ url_for('build_list_remove', type_id=t.type_id) }}">

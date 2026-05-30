@@ -53,7 +53,7 @@ def test_add_then_index_shows_item(client):
     # Tritanium (type_id 34) — added by id; name resolved from SDE.
     resp = client.post(
         "/build-list/add",
-        data={"type_id": "34", "qty": "5", "runs": "2", "me": "10"},
+        data={"type_id": "34", "qty": "5", "me": "10"},
     )
     assert resp.status_code == 302  # redirect back to index
 

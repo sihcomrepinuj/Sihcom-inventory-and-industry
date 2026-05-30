@@ -31,6 +31,17 @@ def test_add_target_appends(tmp_path):
     assert [t["type_id"] for t in loaded] == [671, 17636]
 
 
+def test_add_upserts_same_type_id(tmp_path):
+    path = tmp_path / "bl.json"
+    build_list.add({"type_id": 671, "name": "Revelation", "qty": 5, "runs": None,
+                    "me": 10, "structure_bonus": 0.0, "buy_set": [], "build_station": None}, path)
+    build_list.add({"type_id": 671, "name": "Revelation", "qty": 8, "runs": None,
+                    "me": 10, "structure_bonus": 0.0, "buy_set": [], "build_station": None}, path)
+    loaded = build_list.load(path)
+    assert len(loaded) == 1
+    assert loaded[0]["qty"] == 8     # replaced, not appended
+
+
 def test_remove_target_by_type_id(tmp_path):
     path = tmp_path / "bl.json"
     build_list.save(

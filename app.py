@@ -6,6 +6,7 @@ Deployable to Railway with gunicorn.
 """
 
 import logging
+import math
 import os
 import secrets
 import time
@@ -368,20 +369,28 @@ def _resolve_targets(sde, targets):
         bp_id = sde.find_blueprint_for_product(t["type_id"])
         if bp_id is None:
             continue  # not manufacturable
+        qpr = sde.get_product_qty_per_run(bp_id) or 1
+        qty = t.get("qty", 1)
+        # Qty (product units) is the driver. runs is an optional advanced
+        # override; when absent, derive whole runs from qty (rounding up so we
+        # build at least the requested units).
+        runs = t.get("runs")
+        if not runs:
+            runs = max(1, math.ceil(qty / qpr))
+        needed = runs * qpr  # actual units produced (>= qty, whole runs only)
         children = resolve_material_chain(
             sde, bp_id,
             me_level=t.get("me", 10),
-            runs=t.get("runs", 1),
+            runs=runs,
             structure_bonus=t.get("structure_bonus", 0.0),
         )
-        qpr = sde.get_product_qty_per_run(bp_id) or 1
         # TODO: merge_trees() labels every top-level product as activity_id=1
         # (manufacturing). Reaction-built products are therefore shown as
         # manufacturing. Passing the true activity would require a new
         # plan.Target.activity_id field (out of scope for this task).
         out.append(plan.Target(
             type_id=t["type_id"], name=t["name"], blueprint_type_id=bp_id,
-            needed=t.get("runs", 1) * qpr, children=children,
+            needed=needed, children=children,
         ))
     return out
 
@@ -427,14 +436,23 @@ def _compute_plan():
 
 @app.route("/build-list/add", methods=["POST"])
 def build_list_add():
-    tid = int(request.form["type_id"])
+    try:
+        tid = int(request.form["type_id"])
+        qty = int(request.form.get("qty", 1))
+        me = int(request.form.get("me", 10))
+        structure_bonus = float(request.form.get("structure_bonus", 0))
+    except (KeyError, ValueError) as e:
+        flash(f"Invalid input: {e}")
+        return redirect(url_for("index"))
     sde = get_sde()
     build_list.add({
         "type_id": tid, "name": sde.get_type_name(tid),
-        "qty": int(request.form.get("qty", 1)),
-        "runs": int(request.form.get("runs", 1)),
-        "me": int(request.form.get("me", 10)),
-        "structure_bonus": float(request.form.get("structure_bonus", 0)),
+        "qty": qty,
+        # runs is an optional advanced override; the form no longer surfaces it,
+        # so store None and let _resolve_targets derive runs from qty.
+        "runs": None,
+        "me": me,
+        "structure_bonus": structure_bonus,
         "buy_set": [], "build_station": None,
     })
     return redirect(url_for("index"))

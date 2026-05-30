@@ -17,8 +17,19 @@ def save(targets: list[dict], path=DEFAULT_PATH) -> None:
 
 
 def add(target: dict, path=DEFAULT_PATH) -> None:
+    """Upsert by type_id: replace an existing target in place, else append.
+
+    Keeps the build list a set keyed by type_id (remove() already deletes all
+    matches), so adding the same product twice updates it rather than creating a
+    duplicate row.
+    """
     targets = load(path)
-    targets.append(target)
+    for i, t in enumerate(targets):
+        if t["type_id"] == target["type_id"]:
+            targets[i] = target
+            break
+    else:
+        targets.append(target)
     save(targets, path)
 
 
