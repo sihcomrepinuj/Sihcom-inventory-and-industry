@@ -134,11 +134,31 @@ def test_classify_buy_set_moves_node_to_buy():
 
 
 def test_buy_rows_get_haul_split():
-    buy = [{"type_id": 34, "name": "Tritanium", "needed": 5000, "shortfall": 5000}]
-    loc = {34: {60003760: 1000, 60008494: 2000}}  # 1000 at station, 2000 elsewhere
+    # need 5000 gross; 1000 at station, 2000 elsewhere -> buy 2000
+    buy = [{"type_id": 34, "name": "Tritanium", "needed": 5000, "shortfall": 4000}]
+    loc = {34: {60003760: 1000, 60008494: 2000}}
     volumes = {34: 0.01}
     enriched = plan.enrich_buy(buy, loc, build_station=60003760, volumes=volumes)
     row = enriched[0]
     assert row["at_station"] == 1000
-    assert row["to_buy"] == 2000        # 5000 - 1000 - 2000(elsewhere)
     assert row["elsewhere"] == {60008494: 2000}
+    assert row["to_buy"] == 2000          # 5000 - 1000 - 2000, station counted once
+    assert row["needed"] == 5000          # original gross key preserved
+    assert row["shortfall"] == 4000       # original key preserved
+
+
+def test_enrich_buy_no_station_routes_all_to_buy_or_elsewhere():
+    buy = [{"type_id": 34, "name": "Tritanium", "needed": 5000, "shortfall": 5000}]
+    loc = {34: {60008494: 2000}}          # 2000 owned, no build station chosen
+    enriched = plan.enrich_buy(buy, loc, build_station=None, volumes={34: 0.01})
+    row = enriched[0]
+    assert row["at_station"] == 0         # station 0 sentinel: nothing there
+    assert row["to_buy"] == 3000          # 5000 - 2000 elsewhere
+
+
+def test_enrich_buy_nothing_owned_buys_everything():
+    buy = [{"type_id": 34, "name": "Tritanium", "needed": 5000, "shortfall": 5000}]
+    enriched = plan.enrich_buy(buy, {}, build_station=60003760, volumes={34: 0.01})
+    row = enriched[0]
+    assert row["to_buy"] == 5000
+    assert row["at_station"] == 0

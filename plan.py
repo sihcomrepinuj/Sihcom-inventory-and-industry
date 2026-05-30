@@ -151,10 +151,17 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
 
     Reuses hauling.calculate_deficit so the haul math lives in exactly one place.
     When build_station is None, falls back to a buy-everything-not-owned view.
-    The shortfall (units we are actually short) is what gets split.
+
+    Each merged row carries `needed` (the gross requirement, == node.total_needed),
+    `shortfall` (net of station/job inventory — kept for reference/display), and the
+    deficit fields `at_station` / `elsewhere` / `to_buy` (the actual amounts after
+    considering ALL locations). The split is computed from gross `needed`, so
+    station/elsewhere stock is netted exactly once. (For raw materials in_job is
+    always 0, so gross need is the correct basis.)
     """
     needed = [{"type_id": r["type_id"], "name": r["name"],
-               "quantity": r["shortfall"]} for r in buy_rows]
+               "quantity": r["needed"]} for r in buy_rows]
+    # 0 is never a real EVE station id, so nothing routes to at_station.
     station = build_station if build_station is not None else 0
     deficit = hauling.calculate_deficit(needed, loc_index, station, volumes)
     by_id = {d["type_id"]: d for d in deficit}
