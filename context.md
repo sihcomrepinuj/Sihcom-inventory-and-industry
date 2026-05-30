@@ -25,7 +25,7 @@ app.py              Flask web interface (deployable to Railway)
     ├── esi.py      Online character data (Preston library -> ESI API)
     ├── hauling.py  Deficit calculation for location-aware shopping lists
     ├── plan.py     Pure classifier for the action plan (no Flask/ESI/DB)
-    └── build_list.py  Build-list persistence (build_list.json, upsert by type_id)
+    └── build_list.py  Build-list persistence (build_list.json: {targets, buy_set})
 setup_sde.py        SDE download/conversion script (CCP YAML -> SQLite)
 templates/          Jinja2 templates for the web interface
 tests/              pytest test suite
@@ -40,7 +40,8 @@ tests/              pytest test suite
 - `get_type_volumes(type_ids)` — batch volume lookup for aggregated/flattened material lists
 - `get_product_qty_per_run(blueprint_type_id)` — units of product yielded per manufacturing run (1 for ships, 100 for ammo; `None` if no manufacturing product). Drives the qty -> runs derivation in the action plan.
 - `get_manufacturing_materials()` and `get_activity_materials()` include `volume` from `invTypes` in query results
-- Material chain resolution: `resolve_material_chain()` recursively resolves sub-components; `flatten_material_tree()` aggregates to a shopping list
+- `search_manufacturable(name, limit=25)` — search **published types that have a manufacturing blueprint** (activityID=1), returning `[{type_id, name}]`. Backs the home-page search-to-add so only buildable items can be added as targets (raw materials/non-buildables are excluded).
+- Material chain resolution: `resolve_material_chain()` recursively resolves sub-components; `flatten_material_tree(nodes, buy_set=None)` aggregates to a shopping list — when a `buy_set` is given, components in it are treated as leaves (bought, not exploded into their own inputs)
 - `MaterialNode` dataclass represents tree nodes (type_id, name, quantity, activity, children)
 - Blueprint material data is **not available via ESI** — the SDE is required
 - Used as a context manager: `with SDE() as sde:`
@@ -71,19 +72,23 @@ tests/              pytest test suite
 - `merge_trees(targets)` — walks every target's material tree and accumulates a single `{type_id: ReqNode}` requirement graph, summing `total_needed` across targets so a shared component/raw is one node (not one per target).
 - `classify(graph, loc_index, jobs, build_station, buy_set)` — buckets every still-needed node into **ready** / **in_progress** / **blocked** / **buy**. Buildable nodes with all inputs on hand are ready; those covered by an active/ready/paused job are in_progress; buildable-but-input-short nodes are blocked (with the specific missing inputs and shortfalls); non-buildable or `buy_set` nodes are buy. Input availability is evaluated at the aggregate level (per-branch reservation is a deliberate non-goal).
 - `enrich_buy(buy_rows, loc_index, build_station, volumes)` — attaches the at_station / elsewhere / to_buy split (and volume) to buy rows by reusing `hauling.calculate_deficit`, so haul math lives in one place. Falls back to a buy-everything-not-owned view when no build station is set.
+- `attach_supply_columns(rows, owned_index, volumes)` — pure helper that adds `total` / `owned` / `to_buy` (+ `total_volume` / `to_buy_volume`) to flat supply rows from `flatten_material_tree`. Backs the `/materials` flat supply view; returns new dicts, never mutates inputs.
 
 ### build_list.py — Build-List Persistence
-- Stores the user's **target intent only** (never progress) in `build_list.json` next to the code.
-- `load()` / `save()` — read/write the JSON list.
-- `add(target)` — **upsert by type_id**: replaces an existing target in place, else appends, so re-adding the same product updates rather than duplicates.
-- `remove(type_id)` — deletes all matching targets.
-- A target dict carries `type_id`, `name`, `qty` (the driver), optional `runs` override, `me`, `structure_bonus`, `buy_set`, `build_station`.
+- Stores the user's **target intent + global build/buy choices only** (never progress) in `build_list.json` next to the code.
+- Shape: `{"targets": [...], "buy_set": [type_id, ...]}`. `load()` is backward-compatible — a legacy bare-list file loads as `{"targets": <list>, "buy_set": []}`.
+- `load()` / `save()` — read/write the JSON dict.
+- `add_target(target)` — **upsert by type_id**: replaces an existing target in place, else appends, so re-adding the same product updates rather than duplicates.
+- `remove_target(type_id)` — deletes all matching targets.
+- `toggle_buy(type_id)` — flips a component's membership in the global `buy_set` (the single build-vs-buy choice that applies across the whole list).
+- A target dict carries `type_id`, `name`, `qty` (the driver), optional `runs` override, `me`, `structure_bonus`. (There is **no** per-target `buy_set`/`build_station` — build/buy is global via the top-level `buy_set`.)
 
 ### eve_inventory.py — CLI
 - Two tiers of commands:
   - **SDE-only** (no auth): `search`, `materials`, `detail`, `mecomp`, `prices`, `chain`
   - **Authenticated** (SDE + ESI): `auth`, `assets`, `blueprints`, `jobs`, `shop`, `profit`, `summary`
-  - **Build list**: `plan` — reads `build_list.json`, resolves + merges every target's tree, classifies into ready/in-progress/blocked/buy, and prints the buckets. Uses ESI inventory/jobs only if a token already exists (never forces the SSO flow); without it everything lands in blocked/buy.
+  - **Build list**: `plan` — reads `build_list.json`, resolves + merges every target's tree, classifies into ready/in-progress/blocked/buy, and prints the buckets. Reads the global `buy_set` (`set(data["buy_set"])`), so a component toggled "buy" on the web `/materials` view shows up as a **buy line** here. Uses ESI inventory/jobs only if a token already exists (never forces the SSO flow); without it everything lands in blocked/buy.
+  - The CLI has **no build/buy toggle UI** and no build-list materials command — build vs buy is set on the web `/materials` view, and the flat supply view (total required + to-buy) is web-only. `HELP` notes this. (The unrelated SDE-only `materials <name>` command is a single-blueprint material breakdown, not the build-list view.)
 - `_resolve_targets()` turns build-list dicts into `plan.Target`s: looks up the blueprint, derives runs from `qty` via `get_product_qty_per_run` (qty is the driver; `runs` is an optional advanced override), and resolves the material chain.
 - Environment variables:
   - `STRUCTURE_BONUS` — engineering complex material reduction %
@@ -96,8 +101,9 @@ tests/              pytest test suite
 
 ### app.py — Flask Web Interface
 - Reuses sde.py and esi.py for all data operations
-- Routes: `/` (build list), `/plan` (action plan), `/search` (blueprint/item search — formerly the home page), `/blueprint/<id>` (materials), `/chain/<id>` (full chain), `/shopping/<id>` (shopping list), `/chain/shopping/<id>` (chain shopping), `/market/<id>` (prices), `/profit/<id>` (profit analysis). Blueprint/chain/market/profit/shopping pages remain as drill-downs reached from the plan.
-- Build-list routes: `/build-list/add` (POST — upserts a target via `build_list.add`), `/build-list/remove/<id>` (POST)
+- Routes: `/` (build list, with inline **search-to-add** via `sde.search_manufacturable`), `/materials` (materials view), `/plan` (action plan), `/search` (blueprint/item search — formerly the home page), `/blueprint/<id>` (materials), `/chain/<id>` (full chain), `/shopping/<id>` (shopping list), `/chain/shopping/<id>` (chain shopping), `/market/<id>` (prices), `/profit/<id>` (profit analysis). Blueprint/chain/market/profit/shopping pages remain as drill-downs reached from the plan.
+- Build-list routes: `/build-list/add` (POST — upserts a target via `build_list.add_target`), `/build-list/remove/<id>` (POST — `build_list.remove_target`)
+- Materials routes: `/materials` (`?view=tree` shows per-component **build/buy** toggles; `?view=flat` shows the flattened aggregated supply list with `total` required and, when authed, `to_buy` after inventory — via `flatten_material_tree(nodes, buy_set)` + `plan.attach_supply_columns`). `/materials/toggle/<id>` (POST) flips the global `buy_set` via `build_list.toggle_buy` and redirects back. Build/buy is a single global choice across the whole list and **drives the action plan** (a component set to buy moves from a build node to a buy line).
 - `_resolve_targets()` / `_compute_plan()` — shared by `/plan` and `/api/plan`; mirror the CLI's qty-driven derivation and corp-or-personal asset source. Without ESI auth, `loc_index`/`jobs` are empty and there's no build station, so everything lands in blocked/buy.
 - `/api/plan` — JSON form of the classified buckets
 - `/api/stations` — returns user's manufacturing stations ranked by usage
@@ -176,7 +182,8 @@ Corp-level scopes are included and corp asset lookups are implemented (used by s
 | Template | Purpose |
 |----------|---------|
 | `base.html` | Layout shell (Pico CSS, nav, flash messages) |
-| `build_list.html` | Build list (home page `/`): add/remove targets |
+| `build_list.html` | Build list (home page `/`): search-to-add + add/remove targets |
+| `materials.html` | Materials view (`/materials`): tree with build/buy toggles + flat aggregated supply list (total required, to-buy after inventory) |
 | `plan.html` | Action plan (`/plan`): ready / in-progress / blocked / buy buckets |
 | `index.html` | Search page (`/search`) |
 | `blueprint.html` | Material requirements with live ME recalc (JS), links to chain/shopping/profit |
@@ -213,18 +220,18 @@ isk_hr = profit / (base_time_seconds / 3600 * runs)
 
 ## Test Suite
 
-73 tests across 8 test files, run with `python -m pytest tests/ -v`:
+83 tests across 8 test files, run with `python -m pytest tests/ -v`:
 
-| File | What It Covers |
-|------|---------------|
-| `tests/test_sde.py` | Schema validation, type lookups, blueprint resolution, materials, ME calculation (pure functions), chain resolution, `get_product_qty_per_run` |
-| `tests/test_esi.py` | `build_asset_index` (flat), `build_location_asset_index` (per-location), `extract_manufacturing_stations` (frequency ranking) |
-| `tests/test_hauling.py` | `calculate_deficit`: all-at-station, split locations, nothing owned, volumes, multiple elsewhere, excess inventory |
-| `tests/test_setup_sde.py` | SDE download/conversion bootstrap helpers |
-| `tests/test_plan.py` | Pure classifier: `merge_trees` (shared-component aggregation), `classify` (ready/in-progress/blocked/buy bucketing, missing-input detection, job/inventory netting), `enrich_buy` (deficit split) |
-| `tests/test_build_list.py` | Build-list persistence: load/save/add upsert-by-type_id/remove |
-| `tests/test_app_plan.py` | Flask route wiring for the build list + action plan (`/`, `/build-list/add`, `/build-list/remove`, `/plan`, `/api/plan`) |
-| `tests/test_cli_plan.py` | CLI `plan` command wiring (empty-list path, no SDE/ESI/network) |
+| File | What It Covers | Tests |
+|------|---------------|------|
+| `tests/test_sde.py` | Schema validation, type lookups, blueprint resolution, materials, ME calculation (pure functions), chain resolution, `get_product_qty_per_run`, `search_manufacturable` (finds ships, excludes raws) | 19 |
+| `tests/test_esi.py` | `build_asset_index` (flat), `build_location_asset_index` (per-location), `extract_manufacturing_stations` (frequency ranking) | 10 |
+| `tests/test_hauling.py` | `calculate_deficit`: all-at-station, split locations, nothing owned, volumes, multiple elsewhere, excess inventory; `calculate_build_capacity` | 13 |
+| `tests/test_setup_sde.py` | SDE download/conversion bootstrap helpers | 9 |
+| `tests/test_plan.py` | Pure classifier: `merge_trees` (shared-component aggregation), `classify` (ready/in-progress/blocked/buy bucketing, missing-input detection, job/inventory netting, `buy_set` moves node to buy), `enrich_buy` (deficit split), `attach_supply_columns` (nets owned, volumes, no-mutation) | 14 |
+| `tests/test_build_list.py` | Build-list persistence: load/save/`add_target` upsert-by-type_id/`remove_target`/`toggle_buy` (idempotent flip, preserves targets), legacy bare-list compat | 7 |
+| `tests/test_app_plan.py` | Flask route wiring for the build list + action plan + materials view (`/`, `/build-list/add`, `/build-list/remove`, `/plan`, `/api/plan`, `/materials` tree/flat, `/materials/toggle/<id>`) | 10 |
+| `tests/test_cli_plan.py` | CLI `plan` command wiring (empty-list path, no SDE/ESI/network) | 1 |
 
 SDE tests require `data/sqlite-latest.sqlite` (skip gracefully if missing). ESI, hauling, plan, and build-list tests are pure-function/route tests with no database or network dependencies.
 

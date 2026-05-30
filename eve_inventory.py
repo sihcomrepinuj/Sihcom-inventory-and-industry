@@ -1051,6 +1051,11 @@ Build list:
   plan                             Action plan for the build list
                                    (resolves + classifies into ready/in-progress/
                                    blocked/buy; uses ESI inventory & jobs if authed)
+                                   Build vs buy per component is a global choice
+                                   set on the web /materials view (no CLI toggle);
+                                   a component set to "buy" becomes a buy line here.
+                                   The flat supply view (total required + to-buy
+                                   after inventory) also lives on web /materials.
 
 Environment:
   STRUCTURE_BONUS    Structure material bonus % (default: 0)

@@ -87,8 +87,15 @@ want to build*, then open an **action plan** that tells you what to do next.
    item plus a desired **quantity** (units to build), with optional ME and
    structure-bonus settings.
    - Web: the home page (`/`) is the build list — add/remove targets there.
+     **Search-to-add:** type a ship/item name into the search box on the home
+     page and click **Add** on a result — no type_id needed. The search only
+     lists manufacturable items, so anything you can add is something you can
+     build.
    - CLI: targets live in `build_list.json` (auto-created, per-user, gitignored).
-     The web "add" form writes to it; you can also hand-edit it.
+     The web "add" form writes to it; you can also hand-edit it. Its shape is
+     `{"targets": [...], "buy_set": [...]}` — `targets` are the items to build
+     and `buy_set` is the global list of component type_ids you've chosen to
+     buy rather than build.
 
    **Quantity is the driver.** You specify how many *units* of the product you
    want; the number of manufacturing *runs* is derived from the blueprint's
@@ -124,6 +131,30 @@ want to build*, then open an **action plan** that tells you what to do next.
    hand lands in **blocked** / **buy**. Run `auth` to enable the inventory and
    job checks. (The CLI never forces the SSO browser flow from `plan` — it only
    uses ESI if a token already exists.)
+
+### Materials view (build vs buy) — web only
+
+The web **Materials view** (`/materials`) sits between the build list and the
+plan and is where you decide, per component, whether to **build** it or **buy**
+it. This is a *global* choice that applies across your whole build list — a
+component is either built or bought everywhere it appears, not per target.
+
+It has two modes:
+
+- **Tree** — every target's full material tree with a **build / buy** toggle on
+  each component. Toggling a component to "buy" adds its type_id to the global
+  `buy_set`; toggling back removes it. (Toggling posts to the server and
+  reloads — there is no client-side JavaScript toggle.)
+- **Flat supply list** — the trees flattened and aggregated into one shopping
+  list, showing **total required** per item and, once you're logged in via ESI,
+  the **to-buy after inventory** (total required minus what you already own).
+  Without ESI login, to-buy equals the total. A raw material shared by several
+  targets aggregates to a single summed line.
+
+These build/buy choices **drive the action plan**: a component set to "buy"
+moves out of its build node and shows up as a **buy line** in `plan` (web and
+CLI alike). The CLI reads the same global `buy_set`, but has no toggle UI — set
+build/buy on the web `/materials` view (the flat supply view is web-only too).
 
 ### Detail / drill-down views
 
@@ -173,7 +204,9 @@ python eve_inventory.py shop drake 10 5
 
 The Flask app mirrors the same flow:
 
-- `/` — **build list** (add/remove targets; the home page)
+- `/` — **build list** (search-to-add + add/remove targets; the home page)
+- `/materials` — **materials view** (`?view=tree` build/buy toggles,
+  `?view=flat` aggregated supply list with total required + to-buy)
 - `/plan` — **action plan** (ready / in-progress / blocked / buy)
 - `/search` — blueprint/item search (formerly the home page)
 - `/blueprint/<id>`, `/chain/<id>`, `/shopping/<id>`, `/chain/shopping/<id>`,
