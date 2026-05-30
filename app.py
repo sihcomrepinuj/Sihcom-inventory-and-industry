@@ -484,6 +484,48 @@ def api_plan():
     return jsonify(buckets)
 
 
+@app.route("/materials")
+def materials():
+    view = request.args.get("view", "tree")
+    sde = get_sde()
+    data = build_list.load()
+    targets = data["targets"]
+    buy_set = set(data["buy_set"])
+    resolved = _resolve_targets(sde, targets)   # list[plan.Target], each with .children
+
+    flat_rows = None
+    authed = False
+    if view == "flat":
+        nodes = [child for t in resolved for child in t.children]
+        flat = flatten_material_tree(nodes, buy_set)
+        volumes = sde.get_type_volumes([r["type_id"] for r in flat])
+        owned_index = {}
+        p = get_authed_preston_from_session()
+        if p:
+            authed = True
+            character_id = int(session["character_id"])
+            corporation_id = session.get("corporation_id")
+            # Mirror the corp-or-personal source toggle used by _compute_plan.
+            if corporation_id:
+                owned_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+            else:
+                owned_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+            session["refresh_token"] = p.refresh_token
+        flat_rows = plan.attach_supply_columns(flat, owned_index, volumes)
+
+    return render_template("materials.html", view=view, targets=resolved,
+                           buy_set=buy_set, flat_rows=flat_rows, authed=authed,
+                           has_targets=bool(targets),
+                           character_name=session.get("character_name"))
+
+
+@app.route("/materials/toggle/<int:type_id>", methods=["POST"])
+def materials_toggle(type_id):
+    build_list.toggle_buy(type_id)
+    view = request.form.get("view", "tree")
+    return redirect(url_for("materials", view=view))
+
+
 @app.route("/blueprint/<int:bp_id>")
 def blueprint(bp_id):
     me = int(request.args.get("me", 10))
