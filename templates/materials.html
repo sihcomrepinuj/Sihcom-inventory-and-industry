@@ -3,10 +3,10 @@
 
 {# A build/buy toggle: small POST form that flips the global buy_set and redirects
    back to the current view. Pure server-rendered, no JS required. #}
-{% macro toggle_form(type_id, label) %}
+{% macro toggle_form(type_id, label, name) %}
   <form method="post" action="{{ url_for('materials_toggle', type_id=type_id) }}" style="display:inline; margin:0;">
     <input type="hidden" name="view" value="tree">
-    <button type="submit" class="outline secondary" style="padding:0.1rem 0.4rem; font-size:0.8rem;">{{ label }}</button>
+    <button type="submit" class="outline secondary" style="padding:0.1rem 0.4rem; font-size:0.8rem;" aria-label="{{ label }} ({{ name }})">{{ label }}</button>
   </form>
 {% endmacro %}
 
@@ -17,13 +17,13 @@
   <li>
     {% if n.type_id in buy_set %}
       {{ n.name }} &times; {{ n.quantity_needed | commas }} <strong>(buy)</strong>
-      {{ toggle_form(n.type_id, 'Build instead') }}
+      {{ toggle_form(n.type_id, 'Build instead', n.name) }}
     {% elif n.is_terminal or not n.children %}
       {{ n.name }} &times; {{ n.quantity_needed | commas }}
     {% else %}
       {{ n.name }} &times; {{ n.quantity_needed | commas }}
       {% if n.activity_name %}<span class="text-muted">· {{ n.activity_name }}</span>{% endif %}
-      {{ toggle_form(n.type_id, 'Buy instead') }}
+      {{ toggle_form(n.type_id, 'Buy instead', n.name) }}
       <ul>
         {% for c in n.children %}{{ node(c, buy_set) }}{% endfor %}
       </ul>
@@ -48,9 +48,14 @@
        {% if view == 'flat' %}aria-current="page"{% endif %}>Flat</a>
 </nav>
 
-{% if not has_targets %}
+{% if not targets %}
+{% if has_targets %}
+<p class="text-muted">None of your build-list targets are manufacturable.
+    <a href="/">Edit build list</a></p>
+{% else %}
 <p class="text-muted">Your build list is empty &mdash; add targets first.
     <a href="/">Add a target</a>.</p>
+{% endif %}
 
 {% elif view == 'tree' %}
 {# Each target is a root line (no toggle — you never buy the final target), then
