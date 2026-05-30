@@ -501,6 +501,7 @@ def materials():
         volumes = sde.get_type_volumes([r["type_id"] for r in flat])
         owned_index = {}
         p = get_authed_preston_from_session()
+        # Anonymous viewing allowed; without auth owned=0 so to_buy=total.
         if p:
             authed = True
             character_id = int(session["character_id"])

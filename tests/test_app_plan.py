@@ -128,3 +128,54 @@ def test_api_plan_unauthed_returns_json(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
+
+
+def test_materials_tree_view_renders(client):
+    """GET /materials?view=tree renders the target chain with build/buy toggles.
+
+    Warrior I has buildable intermediates (it's a manufactured drone whose inputs
+    include manufacturable components), so a "Buy instead" toggle appears. This
+    also exercises the recursive node() macro without a Jinja recursion error.
+    """
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/materials?view=tree")
+    assert resp.status_code == 200
+    assert b"Materials" in resp.data
+    assert b"Warrior I" in resp.data
+    assert b"Buy instead" in resp.data
+
+
+def test_materials_flat_view_unauthed_hides_to_buy(client):
+    """GET /materials?view=flat (unauthed) shows totals but hides the to-buy column."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/materials?view=flat")
+    assert resp.status_code == 200
+    assert b"Total required" in resp.data
+    # The owned/to-buy columns are gated behind auth.
+    assert b"To buy" not in resp.data
+
+
+def test_materials_toggle_flips_buy_set(client):
+    """POST /materials/toggle/<id> flips buy_set membership and redirects.
+
+    The toggle route doesn't validate chain membership, so an arbitrary type_id
+    exercises the flip cleanly.
+    """
+    tid = 11399  # Morphite — an arbitrary component id; flip semantics only.
+    resp = client.post(f"/materials/toggle/{tid}", data={"view": "tree"})
+    assert resp.status_code == 302
+    assert tid in build_list.load()["buy_set"]
+    # Toggling again removes it.
+    resp = client.post(f"/materials/toggle/{tid}", data={"view": "tree"})
+    assert resp.status_code == 302
+    assert tid not in build_list.load()["buy_set"]
