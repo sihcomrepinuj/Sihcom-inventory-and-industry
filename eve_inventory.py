@@ -428,6 +428,10 @@ def _resolve_targets(sde: SDE, targets: list[dict]) -> list:
             runs=runs,
             structure_bonus=t.get("structure_bonus", 0.0),
         )
+        # TODO: merge_trees() labels every top-level product as activity_id=1
+        # (manufacturing). Reaction-built products are therefore shown as
+        # manufacturing. Passing the true activity would require a new
+        # plan.Target.activity_id field (out of scope for this task).
         out.append(plan.Target(
             type_id=t["type_id"], name=t["name"], blueprint_type_id=bp_id,
             needed=needed, children=children,
@@ -453,28 +457,32 @@ def cmd_plan():
 
         # Use ESI only if it's already configured AND a saved token exists —
         # never force the SSO browser flow from `plan`.
-        p = None
         if os.path.exists(esi.CONFIG_FILE) and esi.load_refresh_token():
             try:
                 p = esi.get_authed_preston()
+                character_id = esi.get_character_id(p)
+                corporation_id = esi.get_corporation_id(p, character_id)
+                if corporation_id:
+                    loc_index = esi.get_cached_location_asset_index(
+                        p, corporation_id, is_corp=True,
+                    )
+                else:
+                    loc_index = esi.get_cached_location_asset_index(
+                        p, character_id, is_corp=False,
+                    )
+                # Active-only jobs feed classify (_in_job_qty counts only
+                # active/ready/paused). Station ranking uses a completed-
+                # inclusive history so we find the usual build station even
+                # with no active jobs — mirrors app._get_station_list.
+                jobs = esi.fetch_industry_jobs(p, character_id)
+                station_jobs = esi.fetch_industry_jobs(
+                    p, character_id, include_completed=True,
+                )
+                stations = esi.extract_manufacturing_stations(station_jobs)
+                build_station = stations[0] if stations else None
             except Exception as e:
-                print(f"  ESI auth failed ({e}); continuing without it.")
-                p = None
-
-        if p:
-            character_id = esi.get_character_id(p)
-            corporation_id = esi.get_corporation_id(p, character_id)
-            if corporation_id:
-                loc_index = esi.get_cached_location_asset_index(
-                    p, corporation_id, is_corp=True,
-                )
-            else:
-                loc_index = esi.get_cached_location_asset_index(
-                    p, character_id, is_corp=False,
-                )
-            jobs = esi.fetch_industry_jobs(p, character_id)
-            stations = esi.extract_manufacturing_stations(jobs)
-            build_station = stations[0] if stations else None
+                print(f"  ESI lookup failed ({e}); continuing without it.")
+                loc_index, jobs, build_station = {}, [], None
         else:
             print("  No ESI auth — without it everything shows as "
                   "blocked/buy. Run 'auth' to enable inventory/job checks.")
