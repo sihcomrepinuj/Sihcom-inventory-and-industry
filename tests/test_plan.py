@@ -108,6 +108,19 @@ def test_classify_in_progress_from_active_job():
     assert out["ready"] == []
 
 
+def test_classify_partial_owned_plus_job_is_in_progress():
+    g = _graph(_req(1, "Cap Parts", 30, terminal=False, inputs=[34], bp=1001),
+               _req(34, "Tritanium", 3000, terminal=True))
+    loc = {1: {60003760: 10}, 34: {60003760: 3000}}  # own 10 of 30 cap parts
+    jobs = [{"product_type_id": 1, "runs": 20, "activity_id": 1,
+             "status": "active", "end_date": "2026-05-31T00:00:00Z"}]
+    out = plan.classify(g, loc, jobs=jobs, build_station=60003760, buy_set=set())
+    assert [n["type_id"] for n in out["in_progress"]] == [1]
+    row = out["in_progress"][0]
+    assert row["shortfall"] == 0          # 30 - 10 - 20
+    assert out["ready"] == []
+
+
 def test_classify_buy_set_moves_node_to_buy():
     g = _graph(
         _req(671, "Revelation", 5, terminal=False, inputs=[1], bp=2001),

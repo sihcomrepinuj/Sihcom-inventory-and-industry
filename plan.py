@@ -79,6 +79,7 @@ def _in_job_qty(jobs, type_id) -> int:
     for j in jobs:
         if j.get("product_type_id") != type_id:
             continue
+        # paused jobs still hold their reserved inputs, so treat them as in-flight (not Ready)
         if j.get("status") not in ("active", "ready", "paused"):
             continue
         total += j.get("runs", 0)
