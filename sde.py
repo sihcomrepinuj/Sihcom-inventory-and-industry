@@ -139,6 +139,19 @@ class SDE:
         ).fetchone()
         return row["productTypeID"] if row else None
 
+    def get_product_qty_per_run(self, blueprint_type_id: int) -> int | None:
+        """Units of product yielded per manufacturing run (activityID=1).
+
+        e.g. 1 for a ship, 100 for ammo. Returns None if the blueprint has no
+        manufacturing product.
+        """
+        row = self.conn.execute(
+            "SELECT quantity FROM industryActivityProducts "
+            "WHERE typeID = ? AND activityID = 1",
+            (blueprint_type_id,),
+        ).fetchone()
+        return row["quantity"] if row else None
+
     def search_blueprints(self, name: str, limit: int = 25) -> list[dict]:
         """
         Search for blueprints by product name or blueprint name.

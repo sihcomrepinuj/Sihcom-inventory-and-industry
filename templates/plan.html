@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Action Plan — Sihcom Industry{% endblock %}
+{% block content %}
+<h1>Action Plan</h1>
+<p><a href="/" role="button" class="outline">Back to Build List</a></p>
+
+{% if not authed %}
+<p class="text-muted">Not logged in — owned assets and active jobs are unknown,
+so everything appears as blocked or buy. <a href="/login">Log in with EVE SSO</a>
+for the full plan.</p>
+{% endif %}
+
+{% macro bucket(title, rows) %}
+<section>
+    <h2>{{ title }} ({{ rows|length }})</h2>
+    {% if rows %}
+    <table>
+        <thead>
+            <tr><th>Item</th><th>Type ID</th><th class="text-right">Needed</th><th class="text-right">Shortfall</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+            <tr>
+                <td>{{ r.name }}</td>
+                <td>{{ r.type_id }}</td>
+                <td class="text-right">{{ r.needed }}</td>
+                <td class="text-right">{{ r.shortfall }}</td>
+                <td>
+                    {% if r.missing %}
+                        Missing:
+                        {% for m in r.missing %}{{ m.name }} ({{ m.shortfall }}){% if not loop.last %}, {% endif %}{% endfor %}
+                    {% elif r.end_date %}
+                        Ends: {{ r.end_date }}
+                    {% elif r.to_buy is defined %}
+                        Buy {{ r.to_buy }}{% if r.elsewhere %} (haul {{ r.elsewhere.values()|sum }}){% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">Nothing here.</p>
+    {% endif %}
+</section>
+{% endmacro %}
+
+{{ bucket("Ready to build", buckets.ready) }}
+{{ bucket("In progress", buckets.in_progress) }}
+{{ bucket("Blocked", buckets.blocked) }}
+{{ bucket("Buy", buckets.buy) }}
+{% endblock %}

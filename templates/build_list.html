@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Build List — Sihcom Industry{% endblock %}
+{% block content %}
+<h1>Build List</h1>
+<p><a href="/plan" role="button">View Action Plan</a> &middot; <a href="/search">Search items</a></p>
+
+<form method="post" action="{{ url_for('build_list_add') }}" class="controls">
+    <label>Type ID <input type="number" name="type_id" required></label>
+    <label>Qty <input type="number" name="qty" value="1"></label>
+    <label>Runs <input type="number" name="runs" value="1"></label>
+    <label>ME <input type="number" name="me" value="10"></label>
+    <label>Structure bonus <input type="number" step="0.01" name="structure_bonus" value="0"></label>
+    <button type="submit">Add</button>
+</form>
+
+{% if targets %}
+<table>
+    <thead>
+        <tr><th>Item</th><th>Type ID</th><th>Qty</th><th>Runs</th><th>ME</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for t in targets %}
+        <tr>
+            <td>{{ t.name }}</td>
+            <td>{{ t.type_id }}</td>
+            <td>{{ t.qty }}</td>
+            <td>{{ t.runs }}</td>
+            <td>{{ t.me }}</td>
+            <td>
+                <form method="post" action="{{ url_for('build_list_remove', type_id=t.type_id) }}">
+                    <button type="submit" class="outline">Remove</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">Your build list is empty. Add an item by its type ID above.</p>
+{% endif %}
+{% endblock %}
