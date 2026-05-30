@@ -71,7 +71,7 @@
         <thead>
             <tr>
                 <th>Product</th>
-                <th class="text-right">Qty</th>
+                <th class="text-right">Qty short</th>
                 <th>Completes</th>
             </tr>
         </thead>
@@ -193,6 +193,7 @@
         section.hidden = rows.length === 0;
     }
 
+    // NOTE: these row builders mirror the Jinja <tr> markup in the sections above. If you change a section's columns, update BOTH the Jinja row and the matching builder here, or the post-refresh table will drift from the initial render.
     function rowReady(r) {
         const act = ACTIVITY_NAMES[r.activity_id] || 'Manufacturing';
         return '<tr>' +
