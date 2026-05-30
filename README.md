@@ -104,9 +104,12 @@ want to build*, then open an **action plan** that tells you what to do next.
    - **BLOCKED** — buildable items waiting on inputs you don't yet have (and
      lists exactly which inputs, and how short).
    - **BUY LIST** — non-manufacturable items (or things you've chosen to buy),
-     aggregated across all targets, with an at-station / haul / to-buy split and
-     volume. A raw material shared by multiple targets (e.g. Tritanium) appears
-     as a single summed line, not one per target.
+     aggregated across all targets. The "to buy" quantity accounts for stock you
+     already hold (both at your build station and at your other stations), so it
+     reflects only what you actually need to purchase; the list shows the
+     at-station and to-buy quantities plus volume. A raw material shared by
+     multiple targets (e.g. Tritanium) appears as a single summed line, not one
+     per target.
 
    ```bash
    python eve_inventory.py plan
