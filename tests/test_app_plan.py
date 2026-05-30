@@ -40,10 +40,13 @@ def _sde_available():
 
 
 def test_index_empty_build_list(client):
-    """GET / renders the (empty) build list and returns 200."""
+    """GET / renders the (empty) build list with the build-plan affordance."""
     resp = client.get("/")
     assert resp.status_code == 200
     assert b"Build List" in resp.data
+    # The prominent call-to-action and the empty-state message both render.
+    assert b"Build the plan" in resp.data
+    assert b"empty" in resp.data
 
 
 def test_add_then_index_shows_item(client):
@@ -90,6 +93,20 @@ def test_plan_unauthed_returns_200(client):
     resp = client.get("/plan")
     assert resp.status_code == 200
     assert b"Action Plan" in resp.data
+    # Action-first section headers + the refresh affordance always render
+    # (sections are present in the DOM; hidden only when their bucket is empty).
+    assert b"Ready to start" in resp.data
+    assert b"Refresh" in resp.data
+
+
+def test_plan_unauthed_shows_login_banner(client):
+    """Without ESI login, /plan surfaces the login banner explaining the limits."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    resp = client.get("/plan")
+    assert resp.status_code == 200
+    assert b"Not logged in" in resp.data
+    assert b"/login" in resp.data
 
 
 def test_api_plan_unauthed_returns_json(client):
