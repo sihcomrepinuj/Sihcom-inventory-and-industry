@@ -78,7 +78,60 @@ Opens a URL — paste in browser, log in via EVE SSO, authorize. The callback is
 
 ## Usage
 
-### SDE-only commands (no auth needed)
+### Build List + Action Plan (start here)
+
+The primary workflow is **build-list-first**: you maintain a list of *what you
+want to build*, then open an **action plan** that tells you what to do next.
+
+1. **Maintain a build list of targets.** Each target is a manufacturable
+   item plus a desired **quantity** (units to build), with optional ME and
+   structure-bonus settings.
+   - Web: the home page (`/`) is the build list — add/remove targets there.
+   - CLI: targets live in `build_list.json` (auto-created, per-user, gitignored).
+     The web "add" form writes to it; you can also hand-edit it.
+
+   **Quantity is the driver.** You specify how many *units* of the product you
+   want; the number of manufacturing *runs* is derived from the blueprint's
+   per-run output (e.g. ammo yields 100/run, ships 1/run), rounding runs up so
+   you build at least the requested units.
+
+2. **Open the action plan.** It merges every target's full material tree into a
+   single requirement graph, reads your live ESI assets and industry jobs, and
+   classifies everything into four buckets:
+   - **READY TO START NOW** — buildable items whose inputs are all on hand.
+   - **IN PROGRESS** — items currently covered by an active/ready/paused job
+     (shows when the job completes).
+   - **BLOCKED** — buildable items waiting on inputs you don't yet have (and
+     lists exactly which inputs, and how short).
+   - **BUY LIST** — non-manufacturable items (or things you've chosen to buy),
+     aggregated across all targets. The "to buy" quantity accounts for stock you
+     already hold (both at your build station and at your other stations), so it
+     reflects only what you actually need to purchase; the list shows the
+     at-station and to-buy quantities plus volume. A raw material shared by
+     multiple targets (e.g. Tritanium) appears as a single summed line, not one
+     per target.
+
+   ```bash
+   python eve_inventory.py plan
+   ```
+   ```
+   # or in the web UI:
+   /plan
+   ```
+
+   **Degrades gracefully without ESI auth.** With no saved token, the plan has
+   no inventory or job data, so everything that isn't already known to be on
+   hand lands in **blocked** / **buy**. Run `auth` to enable the inventory and
+   job checks. (The CLI never forces the SSO browser flow from `plan` — it only
+   uses ESI if a token already exists.)
+
+### Detail / drill-down views
+
+The per-blueprint commands below are the **detail views** you reach into from
+the plan once you've decided what to work on — material breakdowns, full
+component chains, market prices, profit, and shopping lists for a single item.
+
+#### SDE-only commands (no auth needed)
 
 ```bash
 # Search for items/blueprints
@@ -97,7 +150,7 @@ python eve_inventory.py mecomp revelation
 python eve_inventory.py mecomp "Antimatter Charge M" 10
 ```
 
-### Authenticated commands
+#### Authenticated commands
 
 ```bash
 # Full industry dashboard
@@ -115,6 +168,16 @@ python eve_inventory.py jobs
 # Shopping list: what do I need to buy?
 python eve_inventory.py shop drake 10 5
 ```
+
+### Web interface
+
+The Flask app mirrors the same flow:
+
+- `/` — **build list** (add/remove targets; the home page)
+- `/plan` — **action plan** (ready / in-progress / blocked / buy)
+- `/search` — blueprint/item search (formerly the home page)
+- `/blueprint/<id>`, `/chain/<id>`, `/shopping/<id>`, `/chain/shopping/<id>`,
+  `/market/<id>`, `/profit/<id>` — the per-item drill-down pages, unchanged.
 
 ### Structure bonuses
 

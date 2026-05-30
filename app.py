@@ -6,6 +6,7 @@ Deployable to Railway with gunicorn.
 """
 
 import logging
+import math
 import os
 import secrets
 import time
@@ -25,6 +26,8 @@ from sde import (
 )
 import esi
 from hauling import calculate_build_capacity, calculate_deficit
+import build_list
+import plan
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -331,6 +334,17 @@ def sde_info():
 
 @app.route("/")
 def index():
+    """Home page is now the build list."""
+    targets = build_list.load()
+    return render_template(
+        "build_list.html", targets=targets,
+        character_name=session.get("character_name"),
+    )
+
+
+@app.route("/search")
+def search():
+    """Blueprint/item search (formerly the home page)."""
     q = request.args.get("q", "").strip()
     results = None
     if q:
@@ -342,6 +356,127 @@ def index():
         "index.html", q=q, results=results,
         character_name=session.get("character_name"),
     )
+
+
+# ------------------------------------------------------------------
+# Routes — build list + action plan
+# ------------------------------------------------------------------
+
+def _resolve_targets(sde, targets):
+    """Turn build-list dicts into plan.Target objects with resolved input trees."""
+    out = []
+    for t in targets:
+        bp_id = sde.find_blueprint_for_product(t["type_id"])
+        if bp_id is None:
+            continue  # not manufacturable
+        qpr = sde.get_product_qty_per_run(bp_id) or 1
+        qty = t.get("qty", 1)
+        # Qty (product units) is the driver. runs is an optional advanced
+        # override; when absent, derive whole runs from qty (rounding up so we
+        # build at least the requested units).
+        runs = t.get("runs")
+        if not runs:
+            runs = max(1, math.ceil(qty / qpr))
+        needed = runs * qpr  # actual units produced (>= qty, whole runs only)
+        children = resolve_material_chain(
+            sde, bp_id,
+            me_level=t.get("me", 10),
+            runs=runs,
+            structure_bonus=t.get("structure_bonus", 0.0),
+        )
+        # TODO: merge_trees() labels every top-level product as activity_id=1
+        # (manufacturing). Reaction-built products are therefore shown as
+        # manufacturing. Passing the true activity would require a new
+        # plan.Target.activity_id field (out of scope for this task).
+        out.append(plan.Target(
+            type_id=t["type_id"], name=t["name"], blueprint_type_id=bp_id,
+            needed=needed, children=children,
+        ))
+    return out
+
+
+def _compute_plan():
+    """Compute action-plan buckets. Shared by /plan and /api/plan.
+
+    Returns (buckets, targets, authed). Without ESI auth, loc_index/jobs are
+    empty and there's no build station, so everything lands in blocked/buy.
+    """
+    sde = get_sde()
+    targets = build_list.load()
+    graph = plan.merge_trees(_resolve_targets(sde, targets))
+    buy_set = {tid for t in targets for tid in t.get("buy_set", [])}
+
+    loc_index: dict = {}
+    jobs: list = []
+    build_station = None
+
+    p = get_authed_preston_from_session()
+    if p:
+        character_id = int(session["character_id"])
+        corporation_id = session.get("corporation_id")
+        # Mirror the corp-or-personal source toggle used by the shopping routes.
+        if corporation_id:
+            loc_index = esi.get_cached_location_asset_index(
+                p, corporation_id, is_corp=True,
+            )
+        else:
+            loc_index = esi.get_cached_location_asset_index(
+                p, character_id, is_corp=False,
+            )
+        jobs = esi.fetch_industry_jobs(p, character_id)
+        stations = _get_station_list(p, character_id)
+        build_station = stations[0]["id"] if stations else None
+        session["refresh_token"] = p.refresh_token
+
+    buckets = plan.classify(graph, loc_index, jobs, build_station, buy_set)
+    volumes = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
+    buckets["buy"] = plan.enrich_buy(buckets["buy"], loc_index, build_station, volumes)
+    return buckets, targets, bool(p)
+
+
+@app.route("/build-list/add", methods=["POST"])
+def build_list_add():
+    try:
+        tid = int(request.form["type_id"])
+        qty = int(request.form.get("qty", 1))
+        me = int(request.form.get("me", 10))
+        structure_bonus = float(request.form.get("structure_bonus", 0))
+    except (KeyError, ValueError) as e:
+        flash(f"Invalid input: {e}")
+        return redirect(url_for("index"))
+    sde = get_sde()
+    build_list.add({
+        "type_id": tid, "name": sde.get_type_name(tid),
+        "qty": qty,
+        # runs is an optional advanced override; the form no longer surfaces it,
+        # so store None and let _resolve_targets derive runs from qty.
+        "runs": None,
+        "me": me,
+        "structure_bonus": structure_bonus,
+        "buy_set": [], "build_station": None,
+    })
+    return redirect(url_for("index"))
+
+
+@app.route("/build-list/remove/<int:type_id>", methods=["POST"])
+def build_list_remove(type_id):
+    build_list.remove(type_id)
+    return redirect(url_for("index"))
+
+
+@app.route("/plan")
+def plan_view():
+    buckets, targets, authed = _compute_plan()
+    return render_template(
+        "plan.html", buckets=buckets, targets=targets, authed=authed,
+        character_name=session.get("character_name"),
+    )
+
+
+@app.route("/api/plan")
+def api_plan():
+    buckets, _targets, _authed = _compute_plan()
+    return jsonify(buckets)
 
 
 @app.route("/blueprint/<int:bp_id>")

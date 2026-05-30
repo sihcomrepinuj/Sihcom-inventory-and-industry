@@ -83,6 +83,18 @@ def test_find_product_for_blueprint(sde):
     assert product_id == 24698
 
 
+def test_get_product_qty_per_run_drake(sde):
+    """A Drake Blueprint yields exactly 1 Drake per run."""
+    bp_id = sde.find_blueprint_for_product(24698)
+    assert sde.get_product_qty_per_run(bp_id) == 1
+
+
+def test_get_product_qty_per_run_unknown(sde):
+    """A type with no manufacturing product returns None."""
+    # Tritanium (34) is a raw mineral — not a blueprint.
+    assert sde.get_product_qty_per_run(34) is None
+
+
 # -- Materials --
 
 def test_get_manufacturing_materials_drake(sde):

@@ -2,6 +2,9 @@
 config.json
 tokens.json
 
+# Per-user runtime data (build target list)
+build_list.json
+
 # SDE database (too large for git, downloaded via setup_sde.py)
 data/
 

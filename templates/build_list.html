@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Build List — Sihcom Industry{% endblock %}
+{% block content %}
+<hgroup>
+    <h2>Build List</h2>
+    <p>Targets you want to manufacture. Build the plan to see what to do next.</p>
+</hgroup>
+
+<p>
+    <a href="/plan" role="button">Build the plan &rarr;</a>
+</p>
+
+<h3>Add a target</h3>
+<p class="text-muted">
+    Search for an item to get its Type ID, then add it below.
+</p>
+
+{# Item picker: a simple name search (GET /search) finds the type_id, which the
+   user enters into the add form. Two-step keeps it light and works without JS. #}
+<form method="get" action="/search" class="controls" style="margin-bottom:0.5rem;">
+    <label>
+        Find item
+        <input type="search" name="q" placeholder="e.g. Warrior I" style="width:16rem">
+    </label>
+    <button type="submit" class="outline">Search</button>
+</form>
+
+<form method="post" action="{{ url_for('build_list_add') }}" class="controls">
+    <label>
+        Type ID
+        <input type="number" name="type_id" required style="width:8rem">
+    </label>
+    <label>
+        Qty (units to build)
+        <input type="number" name="qty" value="1" min="1" style="width:8rem">
+    </label>
+    <label>
+        ME
+        <select name="me">
+            {% for level in range(11) %}
+            <option value="{{ level }}" {% if level == 10 %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Structure bonus %
+        <input type="number" step="0.01" name="structure_bonus" value="0" min="0" style="width:7rem">
+    </label>
+    <button type="submit">Add</button>
+</form>
+
+{% if targets %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th class="text-right">Qty</th>
+            <th class="text-right">ME</th>
+            <th class="text-right">Structure</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for t in targets %}
+        <tr>
+            <td>{{ t.name }} <span class="text-muted">({{ t.type_id }})</span></td>
+            <td class="text-right">{{ t.qty | commas }}</td>
+            <td class="text-right">{{ t.me }}</td>
+            <td class="text-right">
+                {% if t.structure_bonus %}-{{ t.structure_bonus }}%{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-right">
+                <form method="post" action="{{ url_for('build_list_remove', type_id=t.type_id) }}" style="margin:0;">
+                    <button type="submit" class="outline secondary">Remove</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<p>
+    <a href="/plan" role="button">Build the plan &rarr;</a>
+</p>
+{% else %}
+<p class="text-muted">Your build list is empty &mdash; add a target to begin.</p>
+{% endif %}
+{% endblock %}

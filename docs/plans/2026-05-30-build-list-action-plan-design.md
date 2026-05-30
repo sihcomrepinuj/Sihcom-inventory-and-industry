@@ -67,7 +67,10 @@ assets + jobs, and sorts by what's actionable now:
   completion countdown.
 - **🔒 Blocked** — buildable in principle but inputs not on hand; names what's missing.
 - **🛒 Buy list** — aggregated terminal/raw materials not owned, with haul/buy split and cost.
+  (See **Deferred** below — the haul-from-other-stations breakdown is netted out of "to buy"
+  but not yet displayed by name.)
 - **💰 Profit rollup** — total material cost vs. output value across the whole build list.
+  (See **Deferred** below — not shipped in the first cut.)
 
 Reopening the tool after jobs complete makes rows move up the page on their own — no manual
 check-off.
@@ -157,3 +160,13 @@ No new network/DB test dependencies.
 - Build list stored as a flat JSON file (not a DB) — fine for a single-user tool.
 - CLI gets a parallel `plan` command — included because both surfaces are used; could be
   deferred to keep the first cut web-only.
+
+## Deferred (not in first cut)
+
+- **Profit rollup — DEFERRED.** The design envisioned a material-cost-vs-output-value rollup;
+  the first implementation ships the four operational stages (ready/in-progress/blocked/buy)
+  only. Profit remains available on the existing per-blueprint `/profit` drill-down page.
+- **Buy list haul column — PARTIAL.** The buy list nets out stock held at your other stations
+  (so "to buy" is accurate), but currently displays only At-station and To-buy quantities.
+  Surfacing the per-location "haul from" breakdown with human-readable station names is a
+  follow-up (station-name resolution already noted as a next step).
