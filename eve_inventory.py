@@ -18,12 +18,14 @@ Commands (require ESI auth):
     jobs                             List industry jobs
     shop <name> [me] [runs]          Shopping list (materials vs assets)
     summary                          Full industry dashboard
+    plan                             Action plan for the build list (uses ESI if authed)
 
 Environment:
     STRUCTURE_BONUS   Structure material bonus % (default: 0)
     MARKET_REGION     Region ID for market prices (default: 10000002 = The Forge/Jita)
 """
 
+import math
 import os
 import sys
 from collections import defaultdict
@@ -37,6 +39,8 @@ from sde import (
     MaterialNode,
 )
 import esi
+import build_list
+import plan
 
 
 # ------------------------------------------------------------------
@@ -394,6 +398,141 @@ def cmd_chain(sde: SDE, args: list[str], structure_bonus: float,
 
     print(f"\n  {'Total volume:':>63} {grand_volume:>12,.2f} m³")
     print(f"  {'Total raw material cost:':>77} {fmt_isk(grand_total):>16} ISK")
+
+
+# ------------------------------------------------------------------
+# Build list + action plan
+# ------------------------------------------------------------------
+
+def _resolve_targets(sde: SDE, targets: list[dict]) -> list:
+    """Turn build-list dicts into plan.Target objects with resolved input trees.
+
+    Mirrors app._resolve_targets: qty (product units) drives runs; runs is an
+    optional override. Skips targets with no manufacturing blueprint.
+    """
+    out = []
+    for t in targets:
+        bp_id = sde.find_blueprint_for_product(t["type_id"])
+        if bp_id is None:
+            print(f"  Skipping '{t['name']}' — not manufacturable.")
+            continue
+        qpr = sde.get_product_qty_per_run(bp_id) or 1
+        qty = t.get("qty", 1)
+        runs = t.get("runs")
+        if not runs:
+            runs = max(1, math.ceil(qty / qpr))
+        needed = runs * qpr
+        children = resolve_material_chain(
+            sde, bp_id,
+            me_level=t.get("me", 10),
+            runs=runs,
+            structure_bonus=t.get("structure_bonus", 0.0),
+        )
+        out.append(plan.Target(
+            type_id=t["type_id"], name=t["name"], blueprint_type_id=bp_id,
+            needed=needed, children=children,
+        ))
+    return out
+
+
+def cmd_plan():
+    targets = build_list.load()
+    if not targets:
+        print("Build list is empty. "
+              "Add targets via the web UI or build_list.json.")
+        return
+
+    with SDE() as sde:
+        resolved = _resolve_targets(sde, targets)
+        graph = plan.merge_trees(resolved)
+        buy_set = {tid for t in targets for tid in t.get("buy_set", [])}
+
+        loc_index: dict = {}
+        jobs: list = []
+        build_station = None
+
+        # Use ESI only if it's already configured AND a saved token exists —
+        # never force the SSO browser flow from `plan`.
+        p = None
+        if os.path.exists(esi.CONFIG_FILE) and esi.load_refresh_token():
+            try:
+                p = esi.get_authed_preston()
+            except Exception as e:
+                print(f"  ESI auth failed ({e}); continuing without it.")
+                p = None
+
+        if p:
+            character_id = esi.get_character_id(p)
+            corporation_id = esi.get_corporation_id(p, character_id)
+            if corporation_id:
+                loc_index = esi.get_cached_location_asset_index(
+                    p, corporation_id, is_corp=True,
+                )
+            else:
+                loc_index = esi.get_cached_location_asset_index(
+                    p, character_id, is_corp=False,
+                )
+            jobs = esi.fetch_industry_jobs(p, character_id)
+            stations = esi.extract_manufacturing_stations(jobs)
+            build_station = stations[0] if stations else None
+        else:
+            print("  No ESI auth — without it everything shows as "
+                  "blocked/buy. Run 'auth' to enable inventory/job checks.")
+
+        buckets = plan.classify(graph, loc_index, jobs, build_station, buy_set)
+        volumes = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
+        buckets["buy"] = plan.enrich_buy(
+            buckets["buy"], loc_index, build_station, volumes,
+        )
+
+    print(f"\n{'='*90}")
+    print("ACTION PLAN")
+    print(f"{'='*90}")
+    print(f"\n  Plan: {len(targets)} target{'s' if len(targets) != 1 else ''}")
+
+    ready = buckets["ready"]
+    in_progress = buckets["in_progress"]
+    blocked = buckets["blocked"]
+    buy = buckets["buy"]
+
+    if ready:
+        print(f"\n  --- READY TO START NOW ---\n")
+        print(f"  {'Name':<35} {'Qty to Make':>12} {'Activity':<16}")
+        print(f"  {'-'*35} {'-'*12} {'-'*16}")
+        for r in ready:
+            act = ACTIVITY_NAMES.get(r.get("activity_id", 0), "Manufacturing")
+            print(f"  {r['name']:<35} {r['shortfall']:>12,} {act:<16}")
+
+    if in_progress:
+        print(f"\n  --- IN PROGRESS ---\n")
+        print(f"  {'Name':<35} {'Qty Short':>12} {'Completes':<22}")
+        print(f"  {'-'*35} {'-'*12} {'-'*22}")
+        for r in in_progress:
+            ends = r.get("end_date") or "-"
+            print(f"  {r['name']:<35} {r['shortfall']:>12,} {ends:<22}")
+
+    if blocked:
+        print(f"\n  --- BLOCKED ---\n")
+        for r in blocked:
+            print(f"  {r['name']}")
+            needs = ", ".join(
+                f"{m['name']} x{m['shortfall']:,}" for m in r.get("missing", [])
+            )
+            print(f"    needs: {needs}")
+
+    if buy:
+        print(f"\n  --- BUY LIST ---\n")
+        print(f"  {'Name':<35} {'To Buy':>12} {'Vol m³':>12} {'At Station':>12}")
+        print(f"  {'-'*35} {'-'*12} {'-'*12} {'-'*12}")
+        for r in buy:
+            to_buy = r.get("to_buy", r.get("shortfall", 0))
+            vol = r.get("to_buy_volume", 0.0)
+            at_station = r.get("at_station", 0)
+            print(f"  {r['name']:<35} {to_buy:>12,} "
+                  f"{vol:>12,.2f} {at_station:>12,}")
+
+    if not (ready or in_progress or blocked or buy):
+        print("\n  Nothing to do — everything needed is already on hand.")
 
 
 # ------------------------------------------------------------------
@@ -899,6 +1038,11 @@ ESI commands (require auth):
   profit <name> [me] [runs]        Profit analysis (materials vs sell price)
   summary                          Full industry dashboard
 
+Build list:
+  plan                             Action plan for the build list
+                                   (resolves + classifies into ready/in-progress/
+                                   blocked/buy; uses ESI inventory & jobs if authed)
+
 Environment:
   STRUCTURE_BONUS    Structure material bonus % (default: 0)
   MARKET_REGION      Region ID for prices (default: 10000002 = The Forge/Jita)
@@ -914,6 +1058,7 @@ Examples:
   python eve_inventory.py profit drake 10 5
   python eve_inventory.py mecomp revelation
   python eve_inventory.py summary
+  python eve_inventory.py plan
 """
 
 
@@ -933,6 +1078,11 @@ def main():
     # Auth-only command
     if command == "auth":
         cmd_auth()
+        return
+
+    # Build plan: opens its own SDE and uses ESI only if already authed.
+    if command == "plan":
+        cmd_plan()
         return
 
     # SDE-only commands (no authentication needed)
