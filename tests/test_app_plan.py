@@ -20,10 +20,11 @@ def client(tmp_path, monkeypatch):
     """
     tmp_list = tmp_path / "build_list.json"
     monkeypatch.setattr(build_list, "DEFAULT_PATH", tmp_list)
-    # load/save/add/remove bind DEFAULT_PATH as a default arg at definition
+    # The build_list functions bind DEFAULT_PATH as a default arg at definition
     # time, so reassigning the module attribute alone is not enough — patch the
     # bound default of each so the routes write to the temp file, never the repo.
-    for fn in (build_list.load, build_list.save, build_list.add, build_list.remove):
+    for fn in (build_list.load, build_list.save, build_list.add_target,
+               build_list.remove_target, build_list.toggle_buy):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -61,9 +62,9 @@ def test_add_then_index_shows_item(client):
     assert resp.status_code == 302  # redirect back to index
 
     stored = json.loads(build_list.DEFAULT_PATH.read_text(encoding="utf-8"))
-    assert len(stored) == 1
-    assert stored[0]["type_id"] == 34
-    assert stored[0]["name"] == "Tritanium"
+    assert len(stored["targets"]) == 1
+    assert stored["targets"][0]["type_id"] == 34
+    assert stored["targets"][0]["name"] == "Tritanium"
 
     resp = client.get("/")
     assert resp.status_code == 200
@@ -72,13 +73,13 @@ def test_add_then_index_shows_item(client):
 
 def test_remove_item(client):
     """POST /build-list/remove drops the target."""
-    build_list.add({
+    build_list.add_target({
         "type_id": 34, "name": "Tritanium", "qty": 1, "runs": 1, "me": 10,
-        "structure_bonus": 0.0, "buy_set": [], "build_station": None,
+        "structure_bonus": 0.0,
     })
     resp = client.post("/build-list/remove/34")
     assert resp.status_code == 302
-    assert build_list.load() == []
+    assert build_list.load()["targets"] == []
 
 
 def test_plan_unauthed_returns_200(client):
@@ -86,9 +87,9 @@ def test_plan_unauthed_returns_200(client):
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
     # A manufacturable item so the graph isn't empty (Warrior I, a drone).
-    build_list.add({
+    build_list.add_target({
         "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
-        "structure_bonus": 0.0, "buy_set": [], "build_station": None,
+        "structure_bonus": 0.0,
     })
     resp = client.get("/plan")
     assert resp.status_code == 200

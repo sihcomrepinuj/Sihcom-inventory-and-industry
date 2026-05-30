@@ -440,7 +440,8 @@ def _resolve_targets(sde: SDE, targets: list[dict]) -> list:
 
 
 def cmd_plan():
-    targets = build_list.load()
+    data = build_list.load()
+    targets = data["targets"]
     if not targets:
         print("Build list is empty. "
               "Add targets via the web UI or build_list.json.")
@@ -449,7 +450,7 @@ def cmd_plan():
     with SDE() as sde:
         resolved = _resolve_targets(sde, targets)
         graph = plan.merge_trees(resolved)
-        buy_set = {tid for t in targets for tid in t.get("buy_set", [])}
+        buy_set = set(data["buy_set"])
 
         loc_index: dict = {}
         jobs: list = []

@@ -335,7 +335,7 @@ def sde_info():
 @app.route("/")
 def index():
     """Home page is now the build list."""
-    targets = build_list.load()
+    targets = build_list.load()["targets"]
     return render_template(
         "build_list.html", targets=targets,
         character_name=session.get("character_name"),
@@ -402,9 +402,10 @@ def _compute_plan():
     empty and there's no build station, so everything lands in blocked/buy.
     """
     sde = get_sde()
-    targets = build_list.load()
+    data = build_list.load()
+    targets = data["targets"]
     graph = plan.merge_trees(_resolve_targets(sde, targets))
-    buy_set = {tid for t in targets for tid in t.get("buy_set", [])}
+    buy_set = set(data["buy_set"])
 
     loc_index: dict = {}
     jobs: list = []
@@ -445,7 +446,7 @@ def build_list_add():
         flash(f"Invalid input: {e}")
         return redirect(url_for("index"))
     sde = get_sde()
-    build_list.add({
+    build_list.add_target({
         "type_id": tid, "name": sde.get_type_name(tid),
         "qty": qty,
         # runs is an optional advanced override; the form no longer surfaces it,
@@ -453,14 +454,13 @@ def build_list_add():
         "runs": None,
         "me": me,
         "structure_bonus": structure_bonus,
-        "buy_set": [], "build_station": None,
     })
     return redirect(url_for("index"))
 
 
 @app.route("/build-list/remove/<int:type_id>", methods=["POST"])
 def build_list_remove(type_id):
-    build_list.remove(type_id)
+    build_list.remove_target(type_id)
     return redirect(url_for("index"))
 
 
