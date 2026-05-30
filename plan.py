@@ -44,18 +44,23 @@ def _accumulate(graph, type_id, name, qty, blueprint_type_id,
     node.direct_inputs |= set(direct_inputs)
 
 
-def _walk(graph, mat_node):
+def _walk(graph, mat_node, buy_set):
     direct_inputs = [c.type_id for c in mat_node.children]
     _accumulate(
         graph, mat_node.type_id, mat_node.name, mat_node.quantity_needed,
         mat_node.blueprint_type_id, mat_node.activity_id,
         mat_node.is_terminal, direct_inputs,
     )
+    # A bought component is treated as a leaf: do not pull in its sub-materials
+    # (mirrors sde.flatten_material_tree's buy_set handling).
+    if mat_node.type_id in buy_set:
+        return
     for child in mat_node.children:
-        _walk(graph, child)
+        _walk(graph, child, buy_set)
 
 
-def merge_trees(targets) -> dict[int, "ReqNode"]:
+def merge_trees(targets, buy_set=None) -> dict[int, "ReqNode"]:
+    buy_set = buy_set or set()
     graph = {}
     for t in targets:
         _accumulate(
@@ -64,7 +69,7 @@ def merge_trees(targets) -> dict[int, "ReqNode"]:
             direct_inputs=[c.type_id for c in t.children],
         )
         for child in t.children:
-            _walk(graph, child)
+            _walk(graph, child, buy_set)
     return graph
 
 

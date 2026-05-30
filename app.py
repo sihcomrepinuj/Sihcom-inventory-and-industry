@@ -409,8 +409,8 @@ def _compute_plan():
     sde = get_sde()
     data = build_list.load()
     targets = data["targets"]
-    graph = plan.merge_trees(_resolve_targets(sde, targets))
     buy_set = set(data["buy_set"])
+    graph = plan.merge_trees(_resolve_targets(sde, targets), buy_set)
 
     loc_index: dict = {}
     jobs: list = []

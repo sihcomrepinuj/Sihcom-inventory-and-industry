@@ -149,7 +149,10 @@ It has two modes:
   list, showing **total required** per item and, once you're logged in via ESI,
   the **to-buy after inventory** (total required minus what you already own).
   Without ESI login, to-buy equals the total. A raw material shared by several
-  targets aggregates to a single summed line.
+  targets aggregates to a single summed line. Note: this flat "to buy" nets
+  **all** your stock regardless of location, whereas the action plan's buy list
+  is location-aware — it nets only stock at your build station (showing the rest
+  separately as "elsewhere").
 
 These build/buy choices **drive the action plan**: a component set to "buy"
 moves out of its build node and shows up as a **buy line** in `plan` (web and

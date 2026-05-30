@@ -57,6 +57,37 @@ def test_merge_diamond_within_single_tree():
     assert set(graph[671].direct_inputs) == {2, 3}
 
 
+def test_merge_trees_prunes_bought_subtree():
+    # Buying an intermediate must drop its sub-materials from the graph.
+    trit = _node(34, "Tritanium", 100, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees(
+        [plan.Target(671, "Revelation", 2001, 5, [parts])],
+        buy_set={1},
+    )
+    assert 1 in graph        # bought component still present (you buy it)
+    assert 34 not in graph   # its sub-material pruned (it's inside what you buy)
+
+
+def test_merge_trees_default_no_buyset_keeps_full_tree():
+    trit = _node(34, "Tritanium", 100, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees([plan.Target(671, "Revelation", 2001, 5, [parts])])
+    assert set(graph) == {671, 1, 34}   # unchanged default behavior
+
+
+def test_classify_via_merge_omits_bought_intermediate_children():
+    # Integration: bought intermediate -> buy list has the component, NOT its raws.
+    trit = _node(34, "Tritanium", 3000, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees(
+        [plan.Target(671, "Revelation", 2001, 5, [parts])], buy_set={1})
+    out = plan.classify(graph, {}, jobs=[], build_station=None, buy_set={1})
+    buy_ids = {r["type_id"] for r in out["buy"]}
+    assert 1 in buy_ids       # buy the cap parts
+    assert 34 not in buy_ids  # do NOT also buy their tritanium
+
+
 def _graph(*nodes):
     return {n.type_id: n for n in nodes}
 

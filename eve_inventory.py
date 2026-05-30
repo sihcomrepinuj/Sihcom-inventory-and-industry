@@ -449,8 +449,8 @@ def cmd_plan():
 
     with SDE() as sde:
         resolved = _resolve_targets(sde, targets)
-        graph = plan.merge_trees(resolved)
         buy_set = set(data["buy_set"])
+        graph = plan.merge_trees(resolved, buy_set)
 
         loc_index: dict = {}
         jobs: list = []
