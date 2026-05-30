@@ -12,42 +12,61 @@
 
 <h3>Add a target</h3>
 <p class="text-muted">
-    Search for an item to get its Type ID, then add it below.
+    Search by name, then click Add on a manufacturable item.
 </p>
 
-{# Item picker: a simple name search (GET /search) finds the type_id, which the
-   user enters into the add form. Two-step keeps it light and works without JS. #}
-<form method="get" action="/search" class="controls" style="margin-bottom:0.5rem;">
+{# Name search runs on this page (GET /). Only manufacturable items appear in the
+   results, each with its own Add form. No Type IDs surface in the UI. #}
+<form method="get" action="/" class="controls" style="margin-bottom:0.5rem;">
     <label>
         Find item
-        <input type="search" name="q" placeholder="e.g. Warrior I" style="width:16rem">
+        <input type="search" name="q" value="{{ q or '' }}" placeholder="e.g. Warrior I" style="width:16rem">
     </label>
     <button type="submit" class="outline">Search</button>
 </form>
 
-<form method="post" action="{{ url_for('build_list_add') }}" class="controls">
-    <label>
-        Type ID
-        <input type="number" name="type_id" required style="width:8rem">
-    </label>
-    <label>
-        Qty (units to build)
-        <input type="number" name="qty" value="1" min="1" style="width:8rem">
-    </label>
-    <label>
-        ME
-        <select name="me">
-            {% for level in range(11) %}
-            <option value="{{ level }}" {% if level == 10 %}selected{% endif %}>{{ level }}</option>
-            {% endfor %}
-        </select>
-    </label>
-    <label>
-        Structure bonus %
-        <input type="number" step="0.01" name="structure_bonus" value="0" min="0" style="width:7rem">
-    </label>
-    <button type="submit">Add</button>
-</form>
+{% if results %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th class="text-right">Qty</th>
+            <th class="text-right">ME</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in results %}
+        {# Each result row is its own add form (associated via the HTML5 form=
+           attribute) so its qty/me submit together. No Type ID is shown. #}
+        <tr>
+            <td>
+                {{ r.name }}
+                <form method="post" action="{{ url_for('build_list_add') }}" id="add-{{ r.type_id }}" style="margin:0;">
+                    <input type="hidden" name="type_id" value="{{ r.type_id }}">
+                    <input type="hidden" name="name" value="{{ r.name }}">
+                </form>
+            </td>
+            <td class="text-right">
+                <input type="number" name="qty" value="1" min="1" form="add-{{ r.type_id }}" style="width:6rem;margin:0;">
+            </td>
+            <td class="text-right">
+                <select name="me" form="add-{{ r.type_id }}" style="width:5rem;margin:0;">
+                    {% for level in range(11) %}
+                    <option value="{{ level }}" {% if level == 10 %}selected{% endif %}>{{ level }}</option>
+                    {% endfor %}
+                </select>
+            </td>
+            <td class="text-right">
+                <button type="submit" form="add-{{ r.type_id }}">Add</button>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% elif q %}
+<p class="text-muted">No manufacturable items match "{{ q }}".</p>
+{% endif %}
 
 {% if targets %}
 <table>

@@ -334,10 +334,15 @@ def sde_info():
 
 @app.route("/")
 def index():
-    """Home page is now the build list."""
-    targets = build_list.load()["targets"]
+    """Home page is the build list, with inline name search for targets."""
+    q = request.args.get("q", "").strip()
+    data = build_list.load()
+    results = None
+    if q:
+        results = get_sde().search_manufacturable(q)
     return render_template(
-        "build_list.html", targets=targets,
+        "build_list.html", targets=data["targets"],
+        q=q, results=results,
         character_name=session.get("character_name"),
     )
 

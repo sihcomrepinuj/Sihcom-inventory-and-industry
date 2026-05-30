@@ -117,6 +117,26 @@ class SDE:
         ).fetchall()
         return [{"type_id": r["typeID"], "name": r["typeName"]} for r in rows]
 
+    def search_manufacturable(self, name: str, limit: int = 25) -> list[dict]:
+        """Search published types that have a manufacturing blueprint (activityID=1).
+
+        Returns [{type_id, name}] ordered by name. Excludes raw materials and other
+        items that can't be built, so they can't be added as build targets.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT it.typeID AS type_id, it.typeName AS name
+            FROM invTypes it
+            JOIN industryActivityProducts iap
+              ON iap.productTypeID = it.typeID AND iap.activityID = 1
+            WHERE it.typeName LIKE ? AND it.published = 1
+            ORDER BY it.typeName
+            LIMIT ?
+            """,
+            (f"%{name}%", limit),
+        ).fetchall()
+        return [{"type_id": r["type_id"], "name": r["name"]} for r in rows]
+
     # ------------------------------------------------------------------
     # Blueprint lookups
     # ------------------------------------------------------------------

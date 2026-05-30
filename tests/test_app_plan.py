@@ -50,6 +50,16 @@ def test_index_empty_build_list(client):
     assert b"empty" in resp.data
 
 
+def test_index_search_shows_manufacturable_with_add(client):
+    """GET /?q=drake lists the manufacturable Drake with an Add affordance."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    resp = client.get("/?q=drake")
+    assert resp.status_code == 200
+    assert b"Drake" in resp.data
+    assert b"Add" in resp.data
+
+
 def test_add_then_index_shows_item(client):
     """POST /build-list/add persists, then GET / shows the item name."""
     if not _sde_available():

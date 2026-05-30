@@ -63,6 +63,14 @@ def test_search_types_drake(sde):
 
 # -- Blueprint lookups --
 
+def test_search_manufacturable_finds_ships_excludes_raws(sde):
+    results = sde.search_manufacturable("Drake")
+    assert any(r["name"] == "Drake" for r in results)
+    # Tritanium is a raw mineral with no manufacturing blueprint -> excluded
+    trit = sde.search_manufacturable("Tritanium")
+    assert all(r["name"] != "Tritanium" for r in trit)
+
+
 def test_search_blueprints_drake(sde):
     """Searching blueprints for 'Drake' should find the Drake Blueprint."""
     results = sde.search_blueprints("Drake")
