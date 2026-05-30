@@ -5,6 +5,8 @@ returns classified buckets. Tested like hauling.py.
 """
 from dataclasses import dataclass, field
 
+import hauling
+
 
 @dataclass
 class Target:
@@ -142,3 +144,22 @@ def classify(graph, loc_index, jobs, build_station, buy_set):
             ready.append(_row(node, shortfall[tid]))
     return {"ready": ready, "in_progress": in_progress,
             "blocked": blocked, "buy": buy}
+
+
+def enrich_buy(buy_rows, loc_index, build_station, volumes):
+    """Attach at_station / elsewhere / to_buy split to buy rows.
+
+    Reuses hauling.calculate_deficit so the haul math lives in exactly one place.
+    When build_station is None, falls back to a buy-everything-not-owned view.
+    The shortfall (units we are actually short) is what gets split.
+    """
+    needed = [{"type_id": r["type_id"], "name": r["name"],
+               "quantity": r["shortfall"]} for r in buy_rows]
+    station = build_station if build_station is not None else 0
+    deficit = hauling.calculate_deficit(needed, loc_index, station, volumes)
+    by_id = {d["type_id"]: d for d in deficit}
+    out = []
+    for r in buy_rows:
+        merged = {**r, **by_id.get(r["type_id"], {})}
+        out.append(merged)
+    return out

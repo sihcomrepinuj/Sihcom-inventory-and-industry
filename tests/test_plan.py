@@ -1,4 +1,5 @@
 from sde import MaterialNode
+import hauling
 import plan
 
 
@@ -130,3 +131,14 @@ def test_classify_buy_set_moves_node_to_buy():
     out = plan.classify(g, {}, jobs=[], build_station=None, buy_set={1})
     assert 1 in {n["type_id"] for n in out["buy"]}
     assert 1 not in {n["type_id"] for n in out["ready"] + out["blocked"]}
+
+
+def test_buy_rows_get_haul_split():
+    buy = [{"type_id": 34, "name": "Tritanium", "needed": 5000, "shortfall": 5000}]
+    loc = {34: {60003760: 1000, 60008494: 2000}}  # 1000 at station, 2000 elsewhere
+    volumes = {34: 0.01}
+    enriched = plan.enrich_buy(buy, loc, build_station=60003760, volumes=volumes)
+    row = enriched[0]
+    assert row["at_station"] == 1000
+    assert row["to_buy"] == 2000        # 5000 - 1000 - 2000(elsewhere)
+    assert row["elsewhere"] == {60008494: 2000}
