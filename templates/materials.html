@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Materials — Sihcom Industry{% endblock %}
+
+{# A build/buy toggle: small POST form that flips the global buy_set and redirects
+   back to the current view. Pure server-rendered, no JS required. #}
+{% macro toggle_form(type_id, label, name) %}
+  <form method="post" action="{{ url_for('materials_toggle', type_id=type_id) }}" style="display:inline; margin:0;">
+    <input type="hidden" name="view" value="tree">
+    <button type="submit" class="outline secondary" style="padding:0.1rem 0.4rem; font-size:0.8rem;" aria-label="{{ label }} ({{ name }})">{{ label }}</button>
+  </form>
+{% endmacro %}
+
+{# Recursive node renderer. A node in buy_set is a LEAF (buy it — do not recurse
+   into its children). A non-buy intermediate with children shows "Buy instead"
+   and recurses. Terminal/childless nodes are plain leaves. #}
+{% macro node(n, buy_set) %}
+  <li>
+    {% if n.type_id in buy_set %}
+      {{ n.name }} &times; {{ n.quantity_needed | commas }} <strong>(buy)</strong>
+      {{ toggle_form(n.type_id, 'Build instead', n.name) }}
+    {% elif n.is_terminal or not n.children %}
+      {{ n.name }} &times; {{ n.quantity_needed | commas }}
+    {% else %}
+      {{ n.name }} &times; {{ n.quantity_needed | commas }}
+      {% if n.activity_name %}<span class="text-muted">· {{ n.activity_name }}</span>{% endif %}
+      {{ toggle_form(n.type_id, 'Buy instead', n.name) }}
+      <ul>
+        {% for c in n.children %}{{ node(c, buy_set) }}{% endfor %}
+      </ul>
+    {% endif %}
+  </li>
+{% endmacro %}
+
+{% block content %}
+<div class="plan-header" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
+    <h2 style="margin:0;">Materials</h2>
+    <a href="/" role="button" class="outline secondary" style="margin:0;">&larr; Build list</a>
+    <a href="/plan" role="button" class="outline secondary" style="margin:0;">Plan</a>
+</div>
+
+{# Tree ⇄ Flat view switch. The current view is marked active. #}
+<nav style="margin-bottom:1.5rem;">
+    <a href="?view=tree" role="button"
+       class="{{ '' if view == 'tree' else 'outline secondary' }}"
+       {% if view == 'tree' %}aria-current="page"{% endif %}>Tree</a>
+    <a href="?view=flat" role="button"
+       class="{{ '' if view == 'flat' else 'outline secondary' }}"
+       {% if view == 'flat' %}aria-current="page"{% endif %}>Flat</a>
+</nav>
+
+{% if not targets %}
+{% if has_targets %}
+<p class="text-muted">None of your build-list targets are manufacturable.
+    <a href="/">Edit build list</a></p>
+{% else %}
+<p class="text-muted">Your build list is empty &mdash; add targets first.
+    <a href="/">Add a target</a>.</p>
+{% endif %}
+
+{% elif view == 'tree' %}
+{# Each target is a root line (no toggle — you never buy the final target), then
+   its children rendered by the recursive node() macro. #}
+{% for t in targets %}
+<ul>
+    <li>
+        <strong>{{ t.name }}</strong> &times; {{ t.needed | commas }}
+        {% if t.children %}
+        <ul>
+            {% for c in t.children %}{{ node(c, buy_set) }}{% endfor %}
+        </ul>
+        {% endif %}
+    </li>
+</ul>
+{% endfor %}
+
+{% else %}
+{# Flat view: the whole build list's components flattened into a supply list. #}
+{% if not authed %}
+<p class="text-muted">Log in to see how much you still need to buy.</p>
+{% endif %}
+
+{% if flat_rows %}
+<table>
+    <thead>
+        <tr>
+            <th>Item</th>
+            <th class="text-right">Total required</th>
+            <th class="text-right">Volume m&sup3;</th>
+            {% if authed %}
+            <th class="text-right">Owned</th>
+            <th class="text-right">To buy</th>
+            <th class="text-right">Buy volume m&sup3;</th>
+            {% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in flat_rows %}
+        <tr>
+            <td>{{ r.name }}</td>
+            <td class="text-right">{{ r.total | commas }}</td>
+            <td class="text-right">{{ r.total_volume | vol }}</td>
+            {% if authed %}
+            <td class="text-right">{{ r.owned | commas }}</td>
+            <td class="text-right">{{ r.to_buy | commas }}</td>
+            <td class="text-right">{{ r.to_buy_volume | vol }}</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">Nothing to supply.</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}

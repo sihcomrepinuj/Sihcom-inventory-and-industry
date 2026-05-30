@@ -44,18 +44,23 @@ def _accumulate(graph, type_id, name, qty, blueprint_type_id,
     node.direct_inputs |= set(direct_inputs)
 
 
-def _walk(graph, mat_node):
+def _walk(graph, mat_node, buy_set):
     direct_inputs = [c.type_id for c in mat_node.children]
     _accumulate(
         graph, mat_node.type_id, mat_node.name, mat_node.quantity_needed,
         mat_node.blueprint_type_id, mat_node.activity_id,
         mat_node.is_terminal, direct_inputs,
     )
+    # A bought component is treated as a leaf: do not pull in its sub-materials
+    # (mirrors sde.flatten_material_tree's buy_set handling).
+    if mat_node.type_id in buy_set:
+        return
     for child in mat_node.children:
-        _walk(graph, child)
+        _walk(graph, child, buy_set)
 
 
-def merge_trees(targets) -> dict[int, "ReqNode"]:
+def merge_trees(targets, buy_set=None) -> dict[int, "ReqNode"]:
+    buy_set = buy_set or set()
     graph = {}
     for t in targets:
         _accumulate(
@@ -64,7 +69,7 @@ def merge_trees(targets) -> dict[int, "ReqNode"]:
             direct_inputs=[c.type_id for c in t.children],
         )
         for child in t.children:
-            _walk(graph, child)
+            _walk(graph, child, buy_set)
     return graph
 
 
@@ -169,4 +174,30 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
     for r in buy_rows:
         merged = {**r, **by_id.get(r["type_id"], {})}
         out.append(merged)
+    return out
+
+
+def attach_supply_columns(rows, owned_index, volumes):
+    """Add total / owned / to_buy (+ volumes) to flat supply rows.
+
+    rows: [{type_id, name, quantity}] from flatten_material_tree.
+    owned_index: {type_id: owned_qty} (flat, summed across locations).
+    volumes: {type_id: unit_volume_m3}.
+    Pure: returns new dicts, never mutates inputs.
+    """
+    out = []
+    for r in rows:
+        tid = r["type_id"]
+        total = r["quantity"]
+        owned = owned_index.get(tid, 0)
+        to_buy = max(0, total - owned)
+        unit_vol = volumes.get(tid, 0.0)
+        out.append({
+            **r,
+            "total": total,
+            "owned": owned,
+            "to_buy": to_buy,
+            "total_volume": total * unit_vol,
+            "to_buy_volume": to_buy * unit_vol,
+        })
     return out

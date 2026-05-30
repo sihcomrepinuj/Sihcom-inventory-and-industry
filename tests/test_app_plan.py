@@ -20,10 +20,11 @@ def client(tmp_path, monkeypatch):
     """
     tmp_list = tmp_path / "build_list.json"
     monkeypatch.setattr(build_list, "DEFAULT_PATH", tmp_list)
-    # load/save/add/remove bind DEFAULT_PATH as a default arg at definition
+    # The build_list functions bind DEFAULT_PATH as a default arg at definition
     # time, so reassigning the module attribute alone is not enough — patch the
     # bound default of each so the routes write to the temp file, never the repo.
-    for fn in (build_list.load, build_list.save, build_list.add, build_list.remove):
+    for fn in (build_list.load, build_list.save, build_list.add_target,
+               build_list.remove_target, build_list.toggle_buy):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -49,6 +50,16 @@ def test_index_empty_build_list(client):
     assert b"empty" in resp.data
 
 
+def test_index_search_shows_manufacturable_with_add(client):
+    """GET /?q=drake lists the manufacturable Drake with an Add affordance."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    resp = client.get("/?q=drake")
+    assert resp.status_code == 200
+    assert b"Drake" in resp.data
+    assert b"Add" in resp.data
+
+
 def test_add_then_index_shows_item(client):
     """POST /build-list/add persists, then GET / shows the item name."""
     if not _sde_available():
@@ -61,9 +72,9 @@ def test_add_then_index_shows_item(client):
     assert resp.status_code == 302  # redirect back to index
 
     stored = json.loads(build_list.DEFAULT_PATH.read_text(encoding="utf-8"))
-    assert len(stored) == 1
-    assert stored[0]["type_id"] == 34
-    assert stored[0]["name"] == "Tritanium"
+    assert len(stored["targets"]) == 1
+    assert stored["targets"][0]["type_id"] == 34
+    assert stored["targets"][0]["name"] == "Tritanium"
 
     resp = client.get("/")
     assert resp.status_code == 200
@@ -72,13 +83,13 @@ def test_add_then_index_shows_item(client):
 
 def test_remove_item(client):
     """POST /build-list/remove drops the target."""
-    build_list.add({
+    build_list.add_target({
         "type_id": 34, "name": "Tritanium", "qty": 1, "runs": 1, "me": 10,
-        "structure_bonus": 0.0, "buy_set": [], "build_station": None,
+        "structure_bonus": 0.0,
     })
     resp = client.post("/build-list/remove/34")
     assert resp.status_code == 302
-    assert build_list.load() == []
+    assert build_list.load()["targets"] == []
 
 
 def test_plan_unauthed_returns_200(client):
@@ -86,9 +97,9 @@ def test_plan_unauthed_returns_200(client):
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
     # A manufacturable item so the graph isn't empty (Warrior I, a drone).
-    build_list.add({
+    build_list.add_target({
         "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
-        "structure_bonus": 0.0, "buy_set": [], "build_station": None,
+        "structure_bonus": 0.0,
     })
     resp = client.get("/plan")
     assert resp.status_code == 200
@@ -117,3 +128,54 @@ def test_api_plan_unauthed_returns_json(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
+
+
+def test_materials_tree_view_renders(client):
+    """GET /materials?view=tree renders the target chain with build/buy toggles.
+
+    Warrior I has buildable intermediates (it's a manufactured drone whose inputs
+    include manufacturable components), so a "Buy instead" toggle appears. This
+    also exercises the recursive node() macro without a Jinja recursion error.
+    """
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/materials?view=tree")
+    assert resp.status_code == 200
+    assert b"Materials" in resp.data
+    assert b"Warrior I" in resp.data
+    assert b"Buy instead" in resp.data
+
+
+def test_materials_flat_view_unauthed_hides_to_buy(client):
+    """GET /materials?view=flat (unauthed) shows totals but hides the to-buy column."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/materials?view=flat")
+    assert resp.status_code == 200
+    assert b"Total required" in resp.data
+    # The owned/to-buy columns are gated behind auth.
+    assert b"To buy" not in resp.data
+
+
+def test_materials_toggle_flips_buy_set(client):
+    """POST /materials/toggle/<id> flips buy_set membership and redirects.
+
+    The toggle route doesn't validate chain membership, so an arbitrary type_id
+    exercises the flip cleanly.
+    """
+    tid = 11399  # Morphite — an arbitrary component id; flip semantics only.
+    resp = client.post(f"/materials/toggle/{tid}", data={"view": "tree"})
+    assert resp.status_code == 302
+    assert tid in build_list.load()["buy_set"]
+    # Toggling again removes it.
+    resp = client.post(f"/materials/toggle/{tid}", data={"view": "tree"})
+    assert resp.status_code == 302
+    assert tid not in build_list.load()["buy_set"]

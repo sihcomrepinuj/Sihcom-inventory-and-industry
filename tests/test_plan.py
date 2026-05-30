@@ -57,6 +57,37 @@ def test_merge_diamond_within_single_tree():
     assert set(graph[671].direct_inputs) == {2, 3}
 
 
+def test_merge_trees_prunes_bought_subtree():
+    # Buying an intermediate must drop its sub-materials from the graph.
+    trit = _node(34, "Tritanium", 100, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees(
+        [plan.Target(671, "Revelation", 2001, 5, [parts])],
+        buy_set={1},
+    )
+    assert 1 in graph        # bought component still present (you buy it)
+    assert 34 not in graph   # its sub-material pruned (it's inside what you buy)
+
+
+def test_merge_trees_default_no_buyset_keeps_full_tree():
+    trit = _node(34, "Tritanium", 100, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees([plan.Target(671, "Revelation", 2001, 5, [parts])])
+    assert set(graph) == {671, 1, 34}   # unchanged default behavior
+
+
+def test_classify_via_merge_omits_bought_intermediate_children():
+    # Integration: bought intermediate -> buy list has the component, NOT its raws.
+    trit = _node(34, "Tritanium", 3000, terminal=True)
+    parts = _node(1, "Cap Parts", 30, terminal=False, children=[trit], bp=1001)
+    graph = plan.merge_trees(
+        [plan.Target(671, "Revelation", 2001, 5, [parts])], buy_set={1})
+    out = plan.classify(graph, {}, jobs=[], build_station=None, buy_set={1})
+    buy_ids = {r["type_id"] for r in out["buy"]}
+    assert 1 in buy_ids       # buy the cap parts
+    assert 34 not in buy_ids  # do NOT also buy their tritanium
+
+
 def _graph(*nodes):
     return {n.type_id: n for n in nodes}
 
@@ -162,3 +193,31 @@ def test_enrich_buy_nothing_owned_buys_everything():
     row = enriched[0]
     assert row["to_buy"] == 5000
     assert row["at_station"] == 0
+
+
+def test_attach_supply_columns_nets_owned_and_volumes():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 5000},
+            {"type_id": 35, "name": "Pyerite", "quantity": 1000}]
+    owned = {34: 2000}                      # own some trit, no pyerite
+    volumes = {34: 0.01, 35: 0.01}
+    out = plan.attach_supply_columns(rows, owned, volumes)
+    trit = next(r for r in out if r["type_id"] == 34)
+    assert trit["total"] == 5000
+    assert trit["owned"] == 2000
+    assert trit["to_buy"] == 3000
+    assert trit["total_volume"] == 50.0     # 5000 * 0.01
+    assert trit["to_buy_volume"] == 30.0    # 3000 * 0.01
+    pyer = next(r for r in out if r["type_id"] == 35)
+    assert pyer["to_buy"] == 1000           # nothing owned
+
+
+def test_attach_supply_columns_owned_exceeds_need():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 100}]
+    out = plan.attach_supply_columns(rows, {34: 999}, {34: 0.01})
+    assert out[0]["to_buy"] == 0            # never negative
+
+
+def test_attach_supply_columns_does_not_mutate_input():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 100}]
+    plan.attach_supply_columns(rows, {}, {})
+    assert rows == [{"type_id": 34, "name": "Tritanium", "quantity": 100}]  # unchanged

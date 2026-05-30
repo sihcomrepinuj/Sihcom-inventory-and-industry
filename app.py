@@ -334,10 +334,15 @@ def sde_info():
 
 @app.route("/")
 def index():
-    """Home page is now the build list."""
-    targets = build_list.load()
+    """Home page is the build list, with inline name search for targets."""
+    q = request.args.get("q", "").strip()
+    data = build_list.load()
+    results = None
+    if q:
+        results = get_sde().search_manufacturable(q)
     return render_template(
-        "build_list.html", targets=targets,
+        "build_list.html", targets=data["targets"],
+        q=q, results=results,
         character_name=session.get("character_name"),
     )
 
@@ -402,9 +407,10 @@ def _compute_plan():
     empty and there's no build station, so everything lands in blocked/buy.
     """
     sde = get_sde()
-    targets = build_list.load()
-    graph = plan.merge_trees(_resolve_targets(sde, targets))
-    buy_set = {tid for t in targets for tid in t.get("buy_set", [])}
+    data = build_list.load()
+    targets = data["targets"]
+    buy_set = set(data["buy_set"])
+    graph = plan.merge_trees(_resolve_targets(sde, targets), buy_set)
 
     loc_index: dict = {}
     jobs: list = []
@@ -445,7 +451,7 @@ def build_list_add():
         flash(f"Invalid input: {e}")
         return redirect(url_for("index"))
     sde = get_sde()
-    build_list.add({
+    build_list.add_target({
         "type_id": tid, "name": sde.get_type_name(tid),
         "qty": qty,
         # runs is an optional advanced override; the form no longer surfaces it,
@@ -453,14 +459,13 @@ def build_list_add():
         "runs": None,
         "me": me,
         "structure_bonus": structure_bonus,
-        "buy_set": [], "build_station": None,
     })
     return redirect(url_for("index"))
 
 
 @app.route("/build-list/remove/<int:type_id>", methods=["POST"])
 def build_list_remove(type_id):
-    build_list.remove(type_id)
+    build_list.remove_target(type_id)
     return redirect(url_for("index"))
 
 
@@ -477,6 +482,49 @@ def plan_view():
 def api_plan():
     buckets, _targets, _authed = _compute_plan()
     return jsonify(buckets)
+
+
+@app.route("/materials")
+def materials():
+    view = request.args.get("view", "tree")
+    sde = get_sde()
+    data = build_list.load()
+    targets = data["targets"]
+    buy_set = set(data["buy_set"])
+    resolved = _resolve_targets(sde, targets)   # list[plan.Target], each with .children
+
+    flat_rows = None
+    authed = False
+    if view == "flat":
+        nodes = [child for t in resolved for child in t.children]
+        flat = flatten_material_tree(nodes, buy_set)
+        volumes = sde.get_type_volumes([r["type_id"] for r in flat])
+        owned_index = {}
+        p = get_authed_preston_from_session()
+        # Anonymous viewing allowed; without auth owned=0 so to_buy=total.
+        if p:
+            authed = True
+            character_id = int(session["character_id"])
+            corporation_id = session.get("corporation_id")
+            # Mirror the corp-or-personal source toggle used by _compute_plan.
+            if corporation_id:
+                owned_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+            else:
+                owned_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+            session["refresh_token"] = p.refresh_token
+        flat_rows = plan.attach_supply_columns(flat, owned_index, volumes)
+
+    return render_template("materials.html", view=view, targets=resolved,
+                           buy_set=buy_set, flat_rows=flat_rows, authed=authed,
+                           has_targets=bool(targets),
+                           character_name=session.get("character_name"))
+
+
+@app.route("/materials/toggle/<int:type_id>", methods=["POST"])
+def materials_toggle(type_id):
+    build_list.toggle_buy(type_id)
+    view = request.form.get("view", "tree")
+    return redirect(url_for("materials", view=view))
 
 
 @app.route("/blueprint/<int:bp_id>")
