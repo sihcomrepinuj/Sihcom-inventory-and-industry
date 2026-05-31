@@ -1,0 +1,21 @@
+{# Shared "Building at" station picker. Receives `station_ctx` and reads the
+   `next`/`view` vars supplied by the including template via {% with %}. Renders
+   only when stations exist; auto-submits on change with a <noscript> fallback. #}
+{% if station_ctx and station_ctx.stations %}
+<form method="post" action="{{ url_for('build_station') }}" class="controls" style="margin:0 0 0.75rem;">
+  <input type="hidden" name="next" value="{{ next }}">
+  {% if view %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+  <label>Building at
+    <select name="station_id" onchange="this.form.submit()">
+      {% set ids = station_ctx.stations | map(attribute='id') | list %}
+      {% for s in station_ctx.stations %}
+        <option value="{{ s.id }}" {% if s.id == station_ctx.selected %}selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+      {% if station_ctx.selected and station_ctx.selected not in ids %}
+        <option value="{{ station_ctx.selected }}" selected>Saved station ({{ station_ctx.selected }})</option>
+      {% endif %}
+    </select>
+  </label>
+  <noscript><button type="submit">Set</button></noscript>
+</form>
+{% endif %}

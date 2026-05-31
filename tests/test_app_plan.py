@@ -24,7 +24,8 @@ def client(tmp_path, monkeypatch):
     # time, so reassigning the module attribute alone is not enough — patch the
     # bound default of each so the routes write to the temp file, never the repo.
     for fn in (build_list.load, build_list.save, build_list.add_target,
-               build_list.remove_target, build_list.toggle_buy):
+               build_list.remove_target, build_list.toggle_buy,
+               build_list.set_build_station):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -128,6 +129,48 @@ def test_api_plan_unauthed_returns_json(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
+
+
+def test_build_station_persists(client):
+    """POST /build-station saves the station id and redirects to the plan."""
+    resp = client.post(
+        "/build-station",
+        data={"station_id": "60003760", "next": "plan_view"},
+    )
+    assert resp.status_code == 302
+    assert build_list.load()["build_station"] == 60003760
+
+
+def test_build_station_empty_clears(client):
+    """An empty station_id clears the saved station (back to most-used default)."""
+    build_list.set_build_station(60003760)
+    resp = client.post("/build-station", data={"station_id": ""})
+    assert resp.status_code == 302
+    assert build_list.load()["build_station"] is None
+
+
+def test_build_station_next_materials_redirects(client):
+    """next=materials redirects to /materials carrying the view param."""
+    resp = client.post(
+        "/build-station",
+        data={"station_id": "60003760", "next": "materials", "view": "flat"},
+    )
+    assert resp.status_code == 302
+    assert "/materials?view=flat" in resp.headers["Location"]
+
+
+def test_plan_unauthed_no_station_picker(client):
+    """Unauthed /plan renders the buy table without a station picker (no stations)."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/plan")
+    assert resp.status_code == 200
+    # No auth → empty station list → the "Building at" picker is not rendered.
+    assert b"Building at" not in resp.data
 
 
 def test_materials_tree_view_renders(client):
