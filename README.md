@@ -93,9 +93,11 @@ want to build*, then open an **action plan** that tells you what to do next.
      build.
    - CLI: targets live in `build_list.json` (auto-created, per-user, gitignored).
      The web "add" form writes to it; you can also hand-edit it. Its shape is
-     `{"targets": [...], "buy_set": [...]}` — `targets` are the items to build
-     and `buy_set` is the global list of component type_ids you've chosen to
-     buy rather than build.
+     `{"targets": [...], "buy_set": [...], "build_station": <id|null>}` —
+     `targets` are the items to build, `buy_set` is the global list of component
+     type_ids you've chosen to buy rather than build, and `build_station` is the
+     facility id you're building at (set via the web picker; defaults to your
+     most-used station when null).
 
    **Quantity is the driver.** You specify how many *units* of the product you
    want; the number of manufacturing *runs* is derived from the blueprint's
@@ -113,10 +115,21 @@ want to build*, then open an **action plan** that tells you what to do next.
    - **BUY LIST** — non-manufacturable items (or things you've chosen to buy),
      aggregated across all targets. The "to buy" quantity accounts for stock you
      already hold (both at your build station and at your other stations), so it
-     reflects only what you actually need to purchase; the list shows the
-     at-station and to-buy quantities plus volume. A raw material shared by
-     multiple targets (e.g. Tritanium) appears as a single summed line, not one
-     per target.
+     reflects only what you actually need to purchase. Per material it shows a
+     **"Haul from" breakdown**: how much is already **at your build station**,
+     how much you **own elsewhere and can haul** (with the station names and
+     quantities), and how much to **buy** — plus the buy volume. A raw material
+     shared by multiple targets (e.g. Tritanium) appears as a single summed
+     line, not one per target.
+
+   **Building at (build-station picker).** On the web Plan and Materials pages a
+   "Building at" dropdown lists your manufacturing facilities, ranked by use and
+   defaulting to your most-used station. Choosing one persists to
+   `build_list.json` (`build_station`) and drives the plan: it's the station the
+   "at your build station" stock is netted against, and everything you own
+   elsewhere shows up under "Haul from". Clearing the choice falls back to the
+   most-used station. (The picker is web-only; the CLI honors whatever station is
+   saved.)
 
    ```bash
    python eve_inventory.py plan
@@ -132,6 +145,11 @@ want to build*, then open an **action plan** that tells you what to do next.
    job checks. (The CLI never forces the SSO browser flow from `plan` — it only
    uses ESI if a token already exists.)
 
+   **The CLI `plan` honors the saved build station.** It reads `build_station`
+   from `build_list.json` (set on the web picker), prints "Building at" and the
+   per-material "Haul from" breakdown, and otherwise falls back to your most-used
+   station. There is no CLI command to *set* the station — choose it on the web.
+
 ### Materials view (build vs buy) — web only
 
 The web **Materials view** (`/materials`) sits between the build list and the
@@ -146,13 +164,14 @@ It has two modes:
   `buy_set`; toggling back removes it. (Toggling posts to the server and
   reloads — there is no client-side JavaScript toggle.)
 - **Flat supply list** — the trees flattened and aggregated into one shopping
-  list, showing **total required** per item and, once you're logged in via ESI,
-  the **to-buy after inventory** (total required minus what you already own).
-  Without ESI login, to-buy equals the total. A raw material shared by several
-  targets aggregates to a single summed line. Note: this flat "to buy" nets
-  **all** your stock regardless of location, whereas the action plan's buy list
-  is location-aware — it nets only stock at your build station (showing the rest
-  separately as "elsewhere").
+  list. It is now **location-aware** and uses the same basis as the action
+  plan's buy list: per item it shows the **total required**, how much is **at
+  your build station**, the **"Haul from"** breakdown of stock you own elsewhere
+  (station names + quantities), and the **to-buy** after netting both — plus
+  volume. The same "Building at" picker as the Plan page drives it, so the flat
+  view and the plan **agree on what to buy**. Without ESI login (or with no
+  station chosen) to-buy equals the total required. A raw material shared by
+  several targets aggregates to a single summed line.
 
 These build/buy choices **drive the action plan**: a component set to "buy"
 moves out of its build node and shows up as a **buy line** in `plan` (web and
@@ -209,8 +228,12 @@ The Flask app mirrors the same flow:
 
 - `/` — **build list** (search-to-add + add/remove targets; the home page)
 - `/materials` — **materials view** (`?view=tree` build/buy toggles,
-  `?view=flat` aggregated supply list with total required + to-buy)
-- `/plan` — **action plan** (ready / in-progress / blocked / buy)
+  `?view=flat` location-aware aggregated supply list: total required + at-station
+  + haul-from + to-buy, with the "Building at" picker)
+- `/plan` — **action plan** (ready / in-progress / blocked / buy), with the
+  "Building at" picker and per-material "Haul from" breakdown
+- `/build-station` (POST) — persists the chosen build station from the picker
+  (shared by the Plan and Materials pages)
 - `/search` — blueprint/item search (formerly the home page)
 - `/blueprint/<id>`, `/chain/<id>`, `/shopping/<id>`, `/chain/shopping/<id>`,
   `/market/<id>`, `/profit/<id>` — the per-item drill-down pages, unchanged.
