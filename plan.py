@@ -177,6 +177,38 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
     return out
 
 
+def resolve_build_station(saved, stations):
+    """Pick the effective build station.
+
+    saved (int|None) wins if set; else the most-used station (stations[0]);
+    else None. stations: [{"id":..., "name":...}] ranked by use.
+    """
+    if saved is not None:
+        return saved
+    if stations:
+        return stations[0]["id"]
+    return None
+
+
+def attach_haul_breakdown(rows, loc_names):
+    """Add a display-ready `haul` list to each row from its `elsewhere` map.
+
+    rows: dicts that may carry `elsewhere` {station_id: qty}.
+    loc_names: {station_id: name}; a missing name falls back to str(id).
+    Returns new dicts (pure); `haul` is sorted by qty descending.
+    """
+    out = []
+    for r in rows:
+        elsewhere = r.get("elsewhere") or {}
+        haul = sorted(
+            ({"name": loc_names.get(lid, str(lid)), "qty": qty}
+             for lid, qty in elsewhere.items()),
+            key=lambda h: h["qty"], reverse=True,
+        )
+        out.append({**r, "haul": haul})
+    return out
+
+
 def attach_supply_columns(rows, owned_index, volumes):
     """Add total / owned / to_buy (+ volumes) to flat supply rows.
 

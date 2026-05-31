@@ -221,3 +221,48 @@ def test_attach_supply_columns_does_not_mutate_input():
     rows = [{"type_id": 34, "name": "Tritanium", "quantity": 100}]
     plan.attach_supply_columns(rows, {}, {})
     assert rows == [{"type_id": 34, "name": "Tritanium", "quantity": 100}]  # unchanged
+
+
+def test_resolve_build_station_saved_wins():
+    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    assert plan.resolve_build_station(2, stations) == 2
+
+
+def test_resolve_build_station_falls_back_to_most_used():
+    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    assert plan.resolve_build_station(None, stations) == 1   # most-used first
+
+
+def test_resolve_build_station_none_when_no_stations():
+    assert plan.resolve_build_station(None, []) is None
+
+
+def test_attach_haul_breakdown_names_and_sorts():
+    rows = [{"type_id": 34, "name": "Tritanium", "to_buy": 100,
+             "elsewhere": {60003760: 200, 60008494: 500}}]
+    names = {60003760: "Sotiyo", 60008494: "Athanor"}
+    out = plan.attach_haul_breakdown(rows, names)
+    assert out[0]["haul"] == [
+        {"name": "Athanor", "qty": 500},   # sorted by qty desc
+        {"name": "Sotiyo", "qty": 200},
+    ]
+
+
+def test_attach_haul_breakdown_missing_name_falls_back_to_id():
+    rows = [{"type_id": 34, "name": "Tritanium", "elsewhere": {999: 10}}]
+    out = plan.attach_haul_breakdown(rows, {})
+    assert out[0]["haul"] == [{"name": "999", "qty": 10}]
+
+
+def test_attach_haul_breakdown_empty_and_nonmutating():
+    rows = [{"type_id": 34, "name": "Tritanium", "elsewhere": {}}]
+    out = plan.attach_haul_breakdown(rows, {})
+    assert out[0]["haul"] == []
+    assert "haul" not in rows[0]    # original not mutated
+
+
+def test_attach_haul_breakdown_missing_elsewhere_key():
+    # a row with no `elsewhere` key at all -> empty haul, no crash
+    rows = [{"type_id": 34, "name": "Tritanium"}]
+    out = plan.attach_haul_breakdown(rows, {})
+    assert out[0]["haul"] == []
