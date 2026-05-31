@@ -17,12 +17,13 @@ def load(path=DEFAULT_PATH) -> dict:
     """
     p = Path(path)
     if not p.exists():
-        return {"targets": [], "buy_set": []}
+        return {"targets": [], "buy_set": [], "build_station": None}
     data = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return {"targets": data, "buy_set": []}
+        return {"targets": data, "buy_set": [], "build_station": None}
     data.setdefault("targets", [])
     data.setdefault("buy_set", [])
+    data.setdefault("build_station", None)
     return data
 
 
@@ -57,4 +58,11 @@ def toggle_buy(type_id: int, path=DEFAULT_PATH) -> None:
         bs.remove(type_id)
     else:
         bs.append(type_id)
+    save(data, path)
+
+
+def set_build_station(station_id, path=DEFAULT_PATH) -> None:
+    """Persist the global build station (an int facility id, or None to clear)."""
+    data = load(path)
+    data["build_station"] = station_id
     save(data, path)
