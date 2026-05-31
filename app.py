@@ -532,28 +532,53 @@ def materials():
 
     flat_rows = None
     authed = False
+    station_ctx = {"stations": [], "selected": None}
     if view == "flat":
         nodes = [child for t in resolved for child in t.children]
-        flat = flatten_material_tree(nodes, buy_set)
+        flat = flatten_material_tree(nodes, buy_set)   # [{type_id, name, quantity}]
         volumes = sde.get_type_volumes([r["type_id"] for r in flat])
-        owned_index = {}
+        loc_index: dict = {}
+        build_station = None
+        loc_names: dict = {}
+        stations: list = []
         p = get_authed_preston_from_session()
-        # Anonymous viewing allowed; without auth owned=0 so to_buy=total.
+        # Anonymous viewing allowed; without auth loc_index is empty so the
+        # location-aware deficit lands everything in to_buy (== gross need),
+        # the SAME basis the /plan buy list uses.
         if p:
             authed = True
             character_id = int(session["character_id"])
             corporation_id = session.get("corporation_id")
             # Mirror the corp-or-personal source toggle used by _compute_plan.
             if corporation_id:
-                owned_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+                loc_index = esi.get_cached_location_asset_index(
+                    p, corporation_id, is_corp=True,
+                )
             else:
-                owned_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+                loc_index = esi.get_cached_location_asset_index(
+                    p, character_id, is_corp=False,
+                )
+            stations = _get_station_list(p, character_id)
+            build_station = plan.resolve_build_station(data.get("build_station"), stations)
             session["refresh_token"] = p.refresh_token
-        flat_rows = plan.attach_supply_columns(flat, owned_index, volumes)
+        deficit = calculate_deficit(flat, loc_index, build_station, volumes)
+        if p:
+            # Resolve elsewhere-location ids to names off the SAME keys
+            # attach_haul_breakdown reads (mirrors _compute_plan / shopping).
+            elsewhere_ids = {lid for d in deficit for lid in d["elsewhere"]}
+            loc_names = {
+                lid: esi.get_cached_location_name(p, lid, "other")
+                for lid in elsewhere_ids
+            }
+        rows = plan.attach_haul_breakdown(deficit, loc_names)
+        for r in rows:
+            r["total_volume"] = r["quantity_needed"] * volumes.get(r["type_id"], 0.0)
+        flat_rows = rows
+        station_ctx = {"stations": stations, "selected": build_station}
 
     return render_template("materials.html", view=view, targets=resolved,
                            buy_set=buy_set, flat_rows=flat_rows, authed=authed,
-                           has_targets=bool(targets),
+                           station_ctx=station_ctx, has_targets=bool(targets),
                            character_name=session.get("character_name"))
 
 

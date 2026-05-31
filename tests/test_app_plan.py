@@ -194,7 +194,7 @@ def test_materials_tree_view_renders(client):
 
 
 def test_materials_flat_view_unauthed_hides_to_buy(client):
-    """GET /materials?view=flat (unauthed) shows totals but hides the to-buy column."""
+    """GET /materials?view=flat (unauthed) shows totals but hides location columns."""
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
     build_list.add_target({
@@ -204,8 +204,59 @@ def test_materials_flat_view_unauthed_hides_to_buy(client):
     resp = client.get("/materials?view=flat")
     assert resp.status_code == 200
     assert b"Total required" in resp.data
-    # The owned/to-buy columns are gated behind auth.
+    # The location-aware columns (at-station / haul / to-buy) are gated behind auth.
+    assert b"Haul from" not in resp.data
     assert b"To buy" not in resp.data
+
+
+def test_materials_and_plan_share_buy_basis(client):
+    """Regression: the flat Materials view and the /plan buy list agree on buys.
+
+    Both flow through the same flatten + calculate_deficit / enrich_buy path with
+    an empty (unauthed) location index, so for a given material the gross need —
+    and therefore the amount to buy — must match across the two screens.
+
+    We assert at the function level (no brittle HTML scraping): the to_buy figure
+    computed for the flat Materials view equals the plan's buy bucket to_buy for
+    the same material type. Tritanium (34) is a stable Warrior I input.
+    """
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    import build_list as bl
+    import hauling
+    import plan as plan_mod
+    from sde import flatten_material_tree
+
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+
+    sde = app_module.get_sde()
+    data = bl.load()
+    targets = data["targets"]
+    buy_set = set(data["buy_set"])
+
+    # Materials flat basis: flatten + calculate_deficit with empty loc_index.
+    resolved = app_module._resolve_targets(sde, targets)
+    nodes = [child for t in resolved for child in t.children]
+    flat = flatten_material_tree(nodes, buy_set)
+    volumes = sde.get_type_volumes([r["type_id"] for r in flat])
+    deficit = hauling.calculate_deficit(flat, {}, None, volumes)
+    mat_buy = {d["type_id"]: d["to_buy"] for d in deficit}
+
+    # Plan buy basis: merge_trees + classify + enrich_buy with empty loc_index.
+    graph = plan_mod.merge_trees(resolved, buy_set)
+    buckets = plan_mod.classify(graph, {}, [], None, buy_set)
+    plan_vol = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
+    enriched = plan_mod.enrich_buy(buckets["buy"], {}, None, plan_vol)
+    plan_buy = {r["type_id"]: r["to_buy"] for r in enriched}
+
+    # They must cover the same materials and agree on every to_buy figure.
+    assert mat_buy, "expected at least one material to buy"
+    assert set(mat_buy) == set(plan_buy)
+    for tid, qty in mat_buy.items():
+        assert plan_buy[tid] == qty, f"buy basis differs for type {tid}"
 
 
 def test_materials_toggle_flips_buy_set(client):
