@@ -210,7 +210,7 @@ def test_materials_flat_view_unauthed_hides_to_buy(client):
 
 
 def test_materials_and_plan_share_buy_basis(client):
-    """Regression: the flat Materials view and the /plan buy list agree on buys.
+    """Regression: pins the empty-asset/shared-path buy basis.
 
     Both flow through the same flatten + calculate_deficit / enrich_buy path with
     an empty (unauthed) location index, so for a given material the gross need —
