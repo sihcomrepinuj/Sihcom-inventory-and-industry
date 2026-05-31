@@ -203,7 +203,7 @@ def attach_haul_breakdown(rows, loc_names):
         haul = sorted(
             ({"name": loc_names.get(lid, str(lid)), "qty": qty}
              for lid, qty in elsewhere.items()),
-            key=lambda h: h["qty"], reverse=True,
+            key=lambda h: (-h["qty"], h["name"]),
         )
         out.append({**r, "haul": haul})
     return out

@@ -266,3 +266,12 @@ def test_attach_haul_breakdown_missing_elsewhere_key():
     rows = [{"type_id": 34, "name": "Tritanium"}]
     out = plan.attach_haul_breakdown(rows, {})
     assert out[0]["haul"] == []
+
+
+def test_attach_haul_breakdown_ties_break_by_name():
+    rows = [{"type_id": 34, "name": "Tritanium",
+             "elsewhere": {1: 100, 2: 100}}]
+    names = {1: "Zebra", 2: "Alpha"}
+    out = plan.attach_haul_breakdown(rows, names)
+    assert out[0]["haul"] == [{"name": "Alpha", "qty": 100},
+                              {"name": "Zebra", "qty": 100}]
