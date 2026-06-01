@@ -28,6 +28,8 @@
     <a href="/materials" role="button" class="outline secondary" style="margin:0;">Materials &amp; build/buy &rarr;</a>
 </div>
 
+{% with next="plan_view" %}{% include "_station_picker.html" %}{% endwith %}
+
 {% if not authed %}
 <div class="login-banner" id="login-banner">
     <strong>Not logged in.</strong> Without EVE SSO, owned assets and active jobs
@@ -123,6 +125,7 @@
             <tr>
                 <th>Item</th>
                 <th class="text-right">To buy</th>
+                <th>Haul from</th>
                 <th class="text-right">Volume m&sup3;</th>
                 <th class="text-right">At station</th>
             </tr>
@@ -132,6 +135,7 @@
             <tr>
                 <td><a href="/market/{{ r.type_id }}">{{ r.name }}</a></td>
                 <td class="text-right">{{ r.to_buy | commas }}</td>
+                <td>{% for h in r.haul %}{{ h.qty | commas }} @ {{ h.name }}{% if not loop.last %}, {% endif %}{% else %}&mdash;{% endfor %}</td>
                 <td class="text-right">{{ r.to_buy_volume | vol }}</td>
                 <td class="text-right">{{ r.at_station | commas }}</td>
             </tr>
@@ -158,11 +162,10 @@
  * Chosen over location.reload() so a refresh doesn't lose scroll position and
  * feels instant — and the row shapes are simple enough to render cleanly.
  *
- * NOTE: jsonify() coerces integer keys of the buy rows' `elsewhere` dict to
- * STRINGS in JSON. We don't surface `elsewhere` in this view, but the buy
- * table reads only flat fields (to_buy, to_buy_volume, at_station), so no
- * string-key handling is needed here. If `elsewhere` is ever rendered, iterate
- * Object.entries() and treat the key as a string (parseInt if a number needed).
+ * NOTE: the buy table reads only flat fields plus `haul`, a pre-baked list of
+ * {name, qty} attached server-side (plan.attach_haul_breakdown). We bake names
+ * in _compute_plan precisely so the JS never has to touch the raw `elsewhere`
+ * dict, whose integer keys jsonify() would coerce to strings.
  */
 (function () {
     const btn = document.getElementById('btn-refresh');
@@ -227,9 +230,14 @@
     }
 
     function rowBuy(r) {
+        const haul = (r.haul || []);
+        const haulCell = haul.length
+            ? haul.map(h => fmtNum(h.qty) + ' @ ' + esc(h.name)).join(', ')
+            : '&mdash;';
         return '<tr>' +
             '<td><a href="/market/' + r.type_id + '">' + esc(r.name) + '</a></td>' +
             '<td class="text-right">' + fmtNum(r.to_buy) + '</td>' +
+            '<td>' + haulCell + '</td>' +
             '<td class="text-right">' + fmtVol(r.to_buy_volume) + '</td>' +
             '<td class="text-right">' + fmtNum(r.at_station) + '</td>' +
             '</tr>';

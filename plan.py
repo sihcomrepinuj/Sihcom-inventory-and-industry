@@ -177,27 +177,33 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
     return out
 
 
-def attach_supply_columns(rows, owned_index, volumes):
-    """Add total / owned / to_buy (+ volumes) to flat supply rows.
+def resolve_build_station(saved, stations):
+    """Pick the effective build station.
 
-    rows: [{type_id, name, quantity}] from flatten_material_tree.
-    owned_index: {type_id: owned_qty} (flat, summed across locations).
-    volumes: {type_id: unit_volume_m3}.
-    Pure: returns new dicts, never mutates inputs.
+    saved (int|None) wins if set; else the most-used station (stations[0]);
+    else None. stations: [{"id":..., "name":...}] ranked by use.
+    """
+    if saved is not None:
+        return saved
+    if stations:
+        return stations[0]["id"]
+    return None
+
+
+def attach_haul_breakdown(rows, loc_names):
+    """Add a display-ready `haul` list to each row from its `elsewhere` map.
+
+    rows: dicts that may carry `elsewhere` {station_id: qty}.
+    loc_names: {station_id: name}; a missing name falls back to str(id).
+    Returns new dicts (pure); `haul` is sorted by qty descending.
     """
     out = []
     for r in rows:
-        tid = r["type_id"]
-        total = r["quantity"]
-        owned = owned_index.get(tid, 0)
-        to_buy = max(0, total - owned)
-        unit_vol = volumes.get(tid, 0.0)
-        out.append({
-            **r,
-            "total": total,
-            "owned": owned,
-            "to_buy": to_buy,
-            "total_volume": total * unit_vol,
-            "to_buy_volume": to_buy * unit_vol,
-        })
+        elsewhere = r.get("elsewhere") or {}
+        haul = sorted(
+            ({"name": loc_names.get(lid, str(lid)), "qty": qty}
+             for lid, qty in elsewhere.items()),
+            key=lambda h: (-h["qty"], h["name"]),
+        )
+        out.append({**r, "haul": haul})
     return out

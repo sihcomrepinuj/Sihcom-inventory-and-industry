@@ -1,7 +1,7 @@
 """Persistence for the user's build list and global build/buy choices.
 
 Stores intent only (targets + which components to buy instead of build),
-never execution progress. Shape: {"targets": [...], "buy_set": [type_id, ...]}.
+never execution progress. Shape: {"targets": [...], "buy_set": [type_id, ...], "build_station": <int|None>}.
 """
 import json
 from pathlib import Path
@@ -10,19 +10,21 @@ DEFAULT_PATH = Path(__file__).parent / "build_list.json"
 
 
 def load(path=DEFAULT_PATH) -> dict:
-    """Return {"targets": [...], "buy_set": [...]}.
+    """Return {"targets": [...], "buy_set": [...], "build_station": <int|None>}.
 
     Backward-compatible: a legacy bare-list file loads as
-    {"targets": <list>, "buy_set": []}.
+    {"targets": <list>, "buy_set": []}. A legacy file lacking the
+    "build_station" key defaults build_station to None.
     """
     p = Path(path)
     if not p.exists():
-        return {"targets": [], "buy_set": []}
+        return {"targets": [], "buy_set": [], "build_station": None}
     data = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return {"targets": data, "buy_set": []}
+        return {"targets": data, "buy_set": [], "build_station": None}
     data.setdefault("targets", [])
     data.setdefault("buy_set", [])
+    data.setdefault("build_station", None)
     return data
 
 
@@ -57,4 +59,11 @@ def toggle_buy(type_id: int, path=DEFAULT_PATH) -> None:
         bs.remove(type_id)
     else:
         bs.append(type_id)
+    save(data, path)
+
+
+def set_build_station(station_id: int | None, path=DEFAULT_PATH) -> None:
+    """Persist the global build station (an int facility id, or None to clear)."""
+    data = load(path)
+    data["build_station"] = station_id
     save(data, path)

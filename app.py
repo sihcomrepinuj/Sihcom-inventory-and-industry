@@ -403,8 +403,9 @@ def _resolve_targets(sde, targets):
 def _compute_plan():
     """Compute action-plan buckets. Shared by /plan and /api/plan.
 
-    Returns (buckets, targets, authed). Without ESI auth, loc_index/jobs are
-    empty and there's no build station, so everything lands in blocked/buy.
+    Returns (buckets, targets, authed, station_ctx). Without ESI auth,
+    loc_index/jobs are empty and there's no build station, so everything lands
+    in blocked/buy. station_ctx = {"stations": [...], "selected": id|None}.
     """
     sde = get_sde()
     data = build_list.load()
@@ -415,6 +416,8 @@ def _compute_plan():
     loc_index: dict = {}
     jobs: list = []
     build_station = None
+    stations: list = []
+    loc_names: dict = {}
 
     p = get_authed_preston_from_session()
     if p:
@@ -431,13 +434,27 @@ def _compute_plan():
             )
         jobs = esi.fetch_industry_jobs(p, character_id)
         stations = _get_station_list(p, character_id)
-        build_station = stations[0]["id"] if stations else None
+        # Saved station wins; else fall back to the most-used station.
+        build_station = plan.resolve_build_station(data.get("build_station"), stations)
         session["refresh_token"] = p.refresh_token
 
     buckets = plan.classify(graph, loc_index, jobs, build_station, buy_set)
     volumes = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
     buckets["buy"] = plan.enrich_buy(buckets["buy"], loc_index, build_station, volumes)
-    return buckets, targets, bool(p)
+    if p:
+        # Resolve the elsewhere-location ids on the buy rows to station names,
+        # iterating the SAME keys attach_haul_breakdown reads (mirrors /shopping)
+        # so key types match and names resolve. Baking `haul` here keeps the
+        # /api/plan JSON clean (no int-keyed dicts for the JS refresh to handle).
+        elsewhere_ids = {lid for r in buckets["buy"] for lid in r.get("elsewhere", {})}
+        loc_names = {
+            lid: esi.get_cached_location_name(p, lid, "other")
+            for lid in elsewhere_ids
+        }
+    buckets["buy"] = plan.attach_haul_breakdown(buckets["buy"], loc_names)
+
+    station_ctx = {"stations": stations, "selected": build_station}
+    return buckets, targets, bool(p), station_ctx
 
 
 @app.route("/build-list/add", methods=["POST"])
@@ -469,18 +486,38 @@ def build_list_remove(type_id):
     return redirect(url_for("index"))
 
 
+@app.route("/build-station", methods=["POST"])
+def build_station():
+    """Persist the chosen build station and redirect back to the source page.
+
+    An empty station_id clears the saved station (falls back to most-used).
+    `next` controls the redirect target (plan_view or materials).
+    """
+    raw = request.form.get("station_id", "").strip()
+    try:
+        build_list.set_build_station(int(raw) if raw else None)
+    except ValueError:
+        flash(f"Invalid station id: {raw}")
+        return redirect(url_for("plan_view"))
+    target = request.form.get("next", "plan_view")
+    if target == "materials":
+        return redirect(url_for("materials", view=request.form.get("view", "flat")))
+    return redirect(url_for("plan_view"))
+
+
 @app.route("/plan")
 def plan_view():
-    buckets, targets, authed = _compute_plan()
+    buckets, targets, authed, station_ctx = _compute_plan()
     return render_template(
         "plan.html", buckets=buckets, targets=targets, authed=authed,
+        station_ctx=station_ctx,
         character_name=session.get("character_name"),
     )
 
 
 @app.route("/api/plan")
 def api_plan():
-    buckets, _targets, _authed = _compute_plan()
+    buckets, _t, _a, _s = _compute_plan()
     return jsonify(buckets)
 
 
@@ -495,28 +532,53 @@ def materials():
 
     flat_rows = None
     authed = False
+    station_ctx = {"stations": [], "selected": None}
     if view == "flat":
         nodes = [child for t in resolved for child in t.children]
-        flat = flatten_material_tree(nodes, buy_set)
+        flat = flatten_material_tree(nodes, buy_set)   # [{type_id, name, quantity}]
         volumes = sde.get_type_volumes([r["type_id"] for r in flat])
-        owned_index = {}
+        loc_index: dict = {}
+        build_station = None
+        loc_names: dict = {}
+        stations: list = []
         p = get_authed_preston_from_session()
-        # Anonymous viewing allowed; without auth owned=0 so to_buy=total.
+        # Anonymous viewing allowed; without auth loc_index is empty so the
+        # location-aware deficit lands everything in to_buy (== gross need),
+        # the SAME basis the /plan buy list uses.
         if p:
             authed = True
             character_id = int(session["character_id"])
             corporation_id = session.get("corporation_id")
             # Mirror the corp-or-personal source toggle used by _compute_plan.
             if corporation_id:
-                owned_index = esi.get_cached_asset_index(p, corporation_id, is_corp=True)
+                loc_index = esi.get_cached_location_asset_index(
+                    p, corporation_id, is_corp=True,
+                )
             else:
-                owned_index = esi.get_cached_asset_index(p, character_id, is_corp=False)
+                loc_index = esi.get_cached_location_asset_index(
+                    p, character_id, is_corp=False,
+                )
+            stations = _get_station_list(p, character_id)
+            build_station = plan.resolve_build_station(data.get("build_station"), stations)
             session["refresh_token"] = p.refresh_token
-        flat_rows = plan.attach_supply_columns(flat, owned_index, volumes)
+        deficit = calculate_deficit(flat, loc_index, build_station, volumes)
+        if p:
+            # Resolve elsewhere-location ids to names off the SAME keys
+            # attach_haul_breakdown reads (mirrors _compute_plan / shopping).
+            elsewhere_ids = {lid for d in deficit for lid in d["elsewhere"]}
+            loc_names = {
+                lid: esi.get_cached_location_name(p, lid, "other")
+                for lid in elsewhere_ids
+            }
+        rows = plan.attach_haul_breakdown(deficit, loc_names)
+        for r in rows:
+            r["total_volume"] = r["quantity_needed"] * volumes.get(r["type_id"], 0.0)
+        flat_rows = rows
+        station_ctx = {"stations": stations, "selected": build_station}
 
     return render_template("materials.html", view=view, targets=resolved,
                            buy_set=buy_set, flat_rows=flat_rows, authed=authed,
-                           has_targets=bool(targets),
+                           station_ctx=station_ctx, has_targets=bool(targets),
                            character_name=session.get("character_name"))
 
 

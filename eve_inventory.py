@@ -455,6 +455,7 @@ def cmd_plan():
         loc_index: dict = {}
         jobs: list = []
         build_station = None
+        p = None
 
         # Use ESI only if it's already configured AND a saved token exists —
         # never force the SSO browser flow from `plan`.
@@ -479,14 +480,27 @@ def cmd_plan():
                 station_jobs = esi.fetch_industry_jobs(
                     p, character_id, include_completed=True,
                 )
-                stations = esi.extract_manufacturing_stations(station_jobs)
-                build_station = stations[0] if stations else None
+                # Honor the SAVED build station (set on the web /plan or
+                # /materials page) first; fall back to the most-used station.
+                # extract_manufacturing_stations returns list[int] (not the
+                # [{"id":...}] dicts resolve_build_station wants), so replicate
+                # its saved-wins-else-most-used precedence inline.
+                saved = data.get("build_station")
+                station_ids = esi.extract_manufacturing_stations(station_jobs)
+                build_station = (
+                    saved if saved is not None
+                    else (station_ids[0] if station_ids else None)
+                )
             except Exception as e:
                 print(f"  ESI lookup failed ({e}); continuing without it.")
-                loc_index, jobs, build_station = {}, [], None
+                loc_index, jobs, p = {}, [], None
+                build_station = data.get("build_station")
         else:
             print("  No ESI auth — without it everything shows as "
                   "blocked/buy. Run 'auth' to enable inventory/job checks.")
+            # No ranked stations available unauthed, but still honor the
+            # saved choice so classify/enrich match the web's build station.
+            build_station = data.get("build_station")
 
         buckets = plan.classify(graph, loc_index, jobs, build_station, buy_set)
         volumes = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
@@ -494,10 +508,31 @@ def cmd_plan():
             buckets["buy"], loc_index, build_station, volumes,
         )
 
+        # Resolve elsewhere-location ids on the buy rows to station names and
+        # bake the display-ready `haul` list (mirrors app._compute_plan). Only
+        # resolve names when authed; unauthed → empty names → haul == [].
+        buy_rows = buckets["buy"]
+        loc_names = {}
+        if p:
+            elsewhere_ids = {
+                lid for r in buy_rows for lid in r.get("elsewhere", {})
+            }
+            loc_names = {
+                lid: esi.get_cached_location_name(p, lid, "other")
+                for lid in elsewhere_ids
+            }
+        buckets["buy"] = plan.attach_haul_breakdown(buy_rows, loc_names)
+
+        building_at = None
+        if p and build_station:
+            building_at = esi.get_cached_location_name(p, build_station, "other")
+
     print(f"\n{'='*90}")
     print("ACTION PLAN")
     print(f"{'='*90}")
     print(f"\n  Plan: {len(targets)} target{'s' if len(targets) != 1 else ''}")
+    if building_at:
+        print(f"  Building at: {building_at}")
 
     ready = buckets["ready"]
     in_progress = buckets["in_progress"]
@@ -539,6 +574,12 @@ def cmd_plan():
             at_station = r.get("at_station", 0)
             print(f"  {r['name']:<35} {to_buy:>12,} "
                   f"{vol:>12,.2f} {at_station:>12,}")
+            haul = r.get("haul") or []
+            if haul:
+                haul_str = ", ".join(
+                    f"{h['qty']:,} @ {h['name']}" for h in haul
+                )
+                print(f"    Haul from: {haul_str}")
 
     if not (ready or in_progress or blocked or buy):
         print("\n  Nothing to do — everything needed is already on hand.")
@@ -1056,6 +1097,8 @@ Build list:
                                    a component set to "buy" becomes a buy line here.
                                    The flat supply view (total required + to-buy
                                    after inventory) also lives on web /materials.
+                                   The build station is set on the web /plan or
+                                   /materials page; the CLI honors the saved choice.
 
 Environment:
   STRUCTURE_BONUS    Structure material bonus % (default: 0)
