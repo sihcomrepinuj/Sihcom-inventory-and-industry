@@ -104,3 +104,32 @@ def test_extract_manufacturing_stations_completed_jobs():
     ]
     stations = extract_manufacturing_stations(jobs)
     assert stations == [1000]
+
+
+# -- Blueprint station detection --
+
+from esi import extract_blueprint_stations
+
+
+def test_extract_blueprint_stations_ranks_by_count():
+    """Unique blueprint locations, ranked by how many blueprints sit there."""
+    bps = [
+        {"type_id": 1, "location_id": 1000},
+        {"type_id": 2, "location_id": 1000},
+        {"type_id": 3, "location_id": 1000},
+        {"type_id": 4, "location_id": 2000},
+        {"type_id": 5, "location_id": 2000},
+        {"type_id": 6, "location_id": 3000},
+    ]
+    stations = extract_blueprint_stations(bps)
+    assert stations == [1000, 2000, 3000]   # 3, 2, 1 by count desc
+
+
+def test_extract_blueprint_stations_empty():
+    assert extract_blueprint_stations([]) == []
+
+
+def test_extract_blueprint_stations_ignores_missing_location():
+    bps = [{"type_id": 1}, {"type_id": 2, "location_id": 0}, {"type_id": 3, "location_id": 5000}]
+    # missing key and falsy 0 are skipped; only 5000 remains
+    assert extract_blueprint_stations(bps) == [5000]

@@ -231,6 +231,23 @@ def extract_manufacturing_stations(jobs: list[dict]) -> list[int]:
     return [fid for fid, _ in facility_counts.most_common()]
 
 
+def extract_blueprint_stations(blueprints: list[dict]) -> list[int]:
+    """Unique blueprint location IDs ranked by how many blueprints are at each.
+
+    Blueprints are what you need on-site to install a manufacturing job, so their
+    locations are the candidate build stations. Skips records with no usable
+    location_id. Ranked most-blueprints-first (your main hub leads).
+    """
+    from collections import Counter
+
+    counts: Counter = Counter()
+    for bp in blueprints:
+        lid = bp.get("location_id")
+        if lid:
+            counts[lid] += 1
+    return [lid for lid, _ in counts.most_common()]
+
+
 # ------------------------------------------------------------------
 # Blueprints
 # ------------------------------------------------------------------
