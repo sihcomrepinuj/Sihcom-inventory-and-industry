@@ -1025,7 +1025,7 @@ def logout():
 @app.route("/api/stations")
 @login_required
 def api_stations():
-    """Return the user's manufacturing stations ranked by usage."""
+    """Return the user's build stations (character blueprint locations; job-history fallback)."""
     p = get_authed_preston_from_session()
     if not p:
         return jsonify(error="Session expired"), 401
