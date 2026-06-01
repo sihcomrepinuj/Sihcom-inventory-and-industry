@@ -310,3 +310,17 @@ def test_get_station_list_caps_at_15(monkeypatch):
     assert len(out) == 15
 
 
+def test_get_station_list_merges_char_and_corp_counts(monkeypatch):
+    import app
+    # Character holds 1 BP at 1000 and 1 at 2000; corp holds 2 BPs at 1000.
+    # Merged: location 1000 -> 3 blueprints, 2000 -> 1, so 1000 ranks first.
+    monkeypatch.setattr(app.esi, "get_cached_blueprints",
+        lambda p, eid, is_corp=False: (
+            [{"location_id": 2000}, {"location_id": 1000}]      # char
+            if not is_corp else
+            [{"location_id": 1000}, {"location_id": 1000}]))    # corp
+    monkeypatch.setattr(app.esi, "get_cached_location_name", lambda p, sid, t: str(sid))
+    out = app._get_station_list(object(), 1, corporation_id=99)
+    assert [s["id"] for s in out] == [1000, 2000]   # 1000 (3) outranks 2000 (1)
+
+
