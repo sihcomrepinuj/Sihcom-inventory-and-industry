@@ -2,11 +2,17 @@
 
 Stores intent only (targets + which components to buy instead of build),
 never execution progress. Shape: {"targets": [...], "buy_set": [type_id, ...], "build_station": <int|None>}.
+
+The file lives in DATA_DIR when that env var is set (e.g. a Railway volume
+mounted at /data), so the build list survives redeploys. It defaults to this
+module's directory for local use and tests.
 """
 import json
+import os
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).parent / "build_list.json"
+DATA_DIR = Path(os.environ.get("DATA_DIR") or Path(__file__).parent)
+DEFAULT_PATH = DATA_DIR / "build_list.json"
 
 
 def load(path=DEFAULT_PATH) -> dict:
@@ -29,7 +35,9 @@ def load(path=DEFAULT_PATH) -> dict:
 
 
 def save(data: dict, path=DEFAULT_PATH) -> None:
-    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def add_target(target: dict, path=DEFAULT_PATH) -> None:

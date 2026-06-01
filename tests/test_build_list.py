@@ -1,3 +1,5 @@
+import importlib
+
 import build_list
 
 
@@ -95,3 +97,22 @@ def test_load_legacy_bare_list_has_build_station_none(tmp_path):
     data = build_list.load(path)
     assert data["targets"] == [{"type_id": 671, "name": "Rev"}]
     assert data["build_station"] is None
+
+
+def test_save_creates_missing_parent_dir(tmp_path):
+    # On a fresh Railway volume the target dir may not exist yet; save() makes it.
+    path = tmp_path / "nested" / "dir" / "bl.json"
+    build_list.save({"targets": [], "buy_set": [], "build_station": None}, path)
+    assert path.exists()
+
+
+def test_data_dir_env_controls_default_path(tmp_path, monkeypatch):
+    # DATA_DIR (e.g. a mounted volume) relocates build_list.json so it survives
+    # redeploys. DEFAULT_PATH is read at import time, so reload under the env.
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    try:
+        importlib.reload(build_list)
+        assert build_list.DEFAULT_PATH == tmp_path / "build_list.json"
+    finally:
+        monkeypatch.delenv("DATA_DIR", raising=False)
+        importlib.reload(build_list)   # restore module-dir default for other tests
