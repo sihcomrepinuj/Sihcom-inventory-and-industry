@@ -252,6 +252,33 @@ python eve_inventory.py materials drake 10 5
 set STRUCTURE_BONUS=4.2
 ```
 
+## Deployment (Railway) — making your data persist
+
+Railway containers have an **ephemeral filesystem**: every deploy starts a fresh
+container, so anything written to disk at runtime is lost on the next deploy. The
+web app's only runtime-written file is `build_list.json` (your targets, build/buy
+choices, and saved build station). Without a persistent volume, **your build list
+resets on every deploy**.
+
+To make it survive deploys:
+
+1. **Add a Volume** to the Railway service and mount it at `/data`
+   (Railway dashboard → service → *Volumes* → mount path `/data`).
+2. **Set `DATA_DIR=/data`** as a service environment variable. The app writes
+   `build_list.json` to `DATA_DIR` when set, falling back to the app directory
+   locally. (`DATA_DIR` is read at startup.)
+
+Recommended environment variables for the deployed web app:
+
+| Variable | Purpose |
+|----------|---------|
+| `DATA_DIR` | Directory for `build_list.json` — point at a mounted volume (e.g. `/data`) so the build list survives redeploys. |
+| `SECRET_KEY` | Flask session signing key. **Set a long random value.** The default (`dev-secret-change-me`) is public, so anyone could forge a logged-in session — always override it in production. |
+| `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `ESI_CALLBACK_URL`, `ESI_USER_AGENT` | ESI app credentials (the web app reads these from the env, not `config.json`). |
+
+Your EVE login itself is stored in the signed Flask **session cookie**, so it
+survives deploys as long as `SECRET_KEY` is stable (which it is once you set it).
+
 ## Architecture
 
 The code is split into three modules:

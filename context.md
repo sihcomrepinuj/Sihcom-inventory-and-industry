@@ -181,6 +181,13 @@ Corp-level scopes are included and corp asset lookups are implemented (used by s
 | `build_list.json` | Build target list (type_id, qty, ME, etc.) | No |
 | `data/sqlite-latest.sqlite` | CCP YAML SDE converted to SQLite (~400 MB) | No |
 
+`build_list.json` lives in `DATA_DIR` when that env var is set (e.g. a Railway
+volume at `/data`), otherwise next to the code. On Railway the filesystem is
+ephemeral, so `DATA_DIR` must point at a mounted volume for the build list to
+survive redeploys (see README → Deployment). Web login is stored in the signed
+Flask session cookie, not a file, so it persists across deploys as long as
+`SECRET_KEY` is stable.
+
 ## Web Templates
 
 | Template | Purpose |
