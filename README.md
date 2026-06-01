@@ -97,7 +97,7 @@ want to build*, then open an **action plan** that tells you what to do next.
      `targets` are the items to build, `buy_set` is the global list of component
      type_ids you've chosen to buy rather than build, and `build_station` is the
      facility id you're building at (set via the web picker; defaults to your
-     most-used station when null).
+     top-ranked blueprint station when null).
 
    **Quantity is the driver.** You specify how many *units* of the product you
    want; the number of manufacturing *runs* is derived from the blueprint's
@@ -123,13 +123,18 @@ want to build*, then open an **action plan** that tells you what to do next.
      line, not one per target.
 
    **Building at (build-station picker).** On the web Plan and Materials pages a
-   "Building at" dropdown lists your manufacturing facilities, ranked by use and
-   defaulting to your most-used station. Choosing one persists to
+   "Building at" dropdown lists **every station where you hold blueprints**
+   (your character's BPOs/BPCs plus your corp's when you're in a corp), **ranked
+   by how many blueprints sit at each** so your main blueprint hub leads — rather
+   than only the facilities where you've run industry jobs before. It shows up to
+   **15** stations, and **falls back** to your manufacturing-job history when no
+   blueprints are found (e.g. a brand-new character). Choosing one persists to
    `build_list.json` (`build_station`) and drives the plan: it's the station the
    "at your build station" stock is netted against, and everything you own
    elsewhere shows up under "Haul from". Clearing the choice falls back to the
-   most-used station. (The picker is web-only; the CLI honors whatever station is
-   saved.)
+   top-ranked station. Asset netting is unchanged — your corp's stock is netted
+   when you're in a corp, your character's otherwise. (The picker is web-only; the
+   CLI honors whatever station is saved.)
 
    ```bash
    python eve_inventory.py plan
@@ -148,7 +153,8 @@ want to build*, then open an **action plan** that tells you what to do next.
    **The CLI `plan` honors the saved build station.** It reads `build_station`
    from `build_list.json` (set on the web picker), prints "Building at" and the
    per-material "Haul from" breakdown, and otherwise falls back to your most-used
-   station. There is no CLI command to *set* the station — choose it on the web.
+   station from job history. There is no CLI command to *set* the station — choose
+   it on the web.
 
 ### Materials view (build vs buy) — web only
 

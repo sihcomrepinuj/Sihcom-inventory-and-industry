@@ -120,17 +120,26 @@ def _compute_capacity_bundle(
         return None
 
 
-def _get_station_list(p: Preston, character_id: int) -> list[dict]:
-    """Fetch manufacturing stations for the character, ranked by usage.
+def _get_station_list(p: Preston, character_id: int,
+                      corporation_id: int | None = None) -> list[dict]:
+    """Build stations ranked by how many of your blueprints sit there.
 
-    Returns up to 10 stations as [{id, name}, ...]. Returns an empty list on
-    any failure (the station dropdown is optional UI).
+    Uses character blueprints, plus corp blueprints when corporation_id is given,
+    so the picker lists everywhere you could install a job. Falls back to
+    manufacturing-job history when no blueprints are available. Returns up to 15
+    stations as [{id, name}, ...]; empty list on total failure (picker is optional).
     """
     try:
-        jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
-        station_ids = esi.extract_manufacturing_stations(jobs)
+        bps = esi.get_cached_blueprints(p, character_id, is_corp=False)
+        if corporation_id:
+            bps = bps + esi.get_cached_blueprints(p, corporation_id, is_corp=True)
+        station_ids = esi.extract_blueprint_stations(bps)
+        if not station_ids:
+            # Fallback: where you've built before.
+            jobs = esi.fetch_industry_jobs(p, character_id, include_completed=True)
+            station_ids = esi.extract_manufacturing_stations(jobs)
         stations = []
-        for sid in station_ids[:10]:
+        for sid in station_ids[:15]:
             name = esi.get_cached_location_name(p, sid, "other")
             stations.append({"id": sid, "name": name})
         return stations
@@ -433,7 +442,7 @@ def _compute_plan():
                 p, character_id, is_corp=False,
             )
         jobs = esi.fetch_industry_jobs(p, character_id)
-        stations = _get_station_list(p, character_id)
+        stations = _get_station_list(p, character_id, corporation_id)
         # Saved station wins; else fall back to the most-used station.
         build_station = plan.resolve_build_station(data.get("build_station"), stations)
         session["refresh_token"] = p.refresh_token
@@ -558,7 +567,7 @@ def materials():
                 loc_index = esi.get_cached_location_asset_index(
                     p, character_id, is_corp=False,
                 )
-            stations = _get_station_list(p, character_id)
+            stations = _get_station_list(p, character_id, corporation_id)
             build_station = plan.resolve_build_station(data.get("build_station"), stations)
             session["refresh_token"] = p.refresh_token
         deficit = calculate_deficit(flat, loc_index, build_station, volumes)
@@ -1016,7 +1025,7 @@ def logout():
 @app.route("/api/stations")
 @login_required
 def api_stations():
-    """Return the user's manufacturing stations ranked by usage."""
+    """Return the user's build stations (character blueprint locations; job-history fallback)."""
     p = get_authed_preston_from_session()
     if not p:
         return jsonify(error="Session expired"), 401

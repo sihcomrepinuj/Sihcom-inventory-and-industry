@@ -58,6 +58,8 @@ tests/              pytest test suite
 - Config in `config.json`, tokens in `tokens.json`
 - Location-aware asset indexing: `build_location_asset_index()` returns `{type_id: {location_id: quantity}}`
 - Manufacturing station detection: `extract_manufacturing_stations()` ranks build stations from industry jobs
+- Blueprint station detection: `extract_blueprint_stations(blueprints)` — pure ranker returning unique blueprint `location_id`s ordered by how many blueprints sit at each (most first), skipping records with no location. These are the candidate build stations (you need the blueprint on-site to install a job)
+- Blueprint caching: `get_cached_blueprints(p, entity_id, is_corp=False)` fetches and caches the raw blueprint list per character/corp (TTL in-memory cache `_raw_blueprint_cache`, `BLUEPRINT_CACHE_TTL=600` — mirrors the asset cache)
 - Raw asset caching: `_get_cached_raw_assets()` stores raw ESI data, builds flat or location-aware indexes on demand
 
 ### hauling.py — Deficit Calculation
@@ -108,9 +110,10 @@ tests/              pytest test suite
 - Build-list routes: `/build-list/add` (POST — upserts a target via `build_list.add_target`), `/build-list/remove/<id>` (POST — `build_list.remove_target`)
 - Materials routes: `/materials` (`?view=tree` shows per-component **build/buy** toggles; `?view=flat` shows the flattened aggregated supply list — now **location-aware**: `flatten_material_tree(nodes, buy_set)` then `hauling.calculate_deficit` (the same call the plan buy list uses) for the at_station / elsewhere / to_buy split, then `plan.attach_haul_breakdown` for the "Haul from" names, plus volume. So the flat view and the action plan agree on what to buy. The flat view also renders the shared "Building at" picker (`station_ctx`) and resolves the saved-or-most-used station via `plan.resolve_build_station`). `/materials/toggle/<id>` (POST) flips the global `buy_set` via `build_list.toggle_buy` and redirects back. Build/buy is a single global choice across the whole list and **drives the action plan** (a component set to buy moves from a build node to a buy line).
 - Build-station route: `/build-station` (POST) persists the picker choice via `build_list.set_build_station` (empty value clears it, falling back to most-used) and redirects to the source page (`next` = `plan_view` or `materials`, preserving `view`). The Plan and Materials pages both render the shared `templates/_station_picker.html` partial, which posts here on `<select>` change.
+- `_get_station_list(p, character_id, corporation_id=None)` — builds the "Building at" picker options, returning `[{id, name}]` (up to **15**). Now **blueprint-based**: it gathers character blueprints (plus corp blueprints when `corporation_id` is given) via `esi.get_cached_blueprints`, ranks their locations with `esi.extract_blueprint_stations` (most blueprints first, so your main hub leads), resolves names, and caps at 15. **Falls back** to manufacturing-job history (`esi.fetch_industry_jobs` + `esi.extract_manufacturing_stations`) when no blueprints are found (e.g. a brand-new character); returns `[]` on total failure. The contract is unchanged, so the picker, `resolve_build_station`, and `/build-station` are untouched. The Plan and Materials pages (`_compute_plan`, `materials`) pass `corporation_id`, so corp blueprints are included there; the legacy `shopping`/`profit` drill-down routes call it char-only (default `None`). This means those drill-down pages' station picker now lists character blueprint locations rather than job-history stations — a subtle UX change on those pages.
 - `_resolve_targets()` / `_compute_plan()` — shared by `/plan` and `/api/plan`; mirror the CLI's qty-driven derivation and corp-or-personal asset source. `_compute_plan` resolves the saved-or-most-used build station (`plan.resolve_build_station`), runs `classify` + `enrich_buy` (location-aware) and `attach_haul_breakdown`, and returns a `station_ctx` (`{"stations": [...], "selected": id|None}`) for the picker. Without ESI auth, `loc_index`/`jobs` are empty and there's no build station, so everything lands in blocked/buy.
 - `/api/plan` — JSON form of the classified buckets
-- `/api/stations` — returns user's manufacturing stations ranked by usage
+- `/api/stations` — returns the user's stations from `_get_station_list` (character blueprint locations ranked by count, job-history fallback)
 - JSON API endpoints: `/api/materials/<id>`, `/api/chain/<id>`, `/api/profit/<id>` — used for live recalculation via JS
 - `_compute_profit()` — shared helper for profit route and API (material cost split, revenue, margins, ISK/hr)
 - Chain tree caching for performance (SDE data is static)
@@ -232,17 +235,17 @@ isk_hr = profit / (base_time_seconds / 3600 * runs)
 
 ## Test Suite
 
-102 tests across 8 test files, run with `python -m pytest tests/ -v`:
+113 tests across 8 test files, run with `python -m pytest tests/ -v`:
 
 | File | What It Covers | Tests |
 |------|---------------|------|
 | `tests/test_sde.py` | Schema validation, type lookups, blueprint resolution, materials, ME calculation (pure functions), chain resolution, `get_product_qty_per_run`, `search_manufacturable` (finds ships, excludes raws) | 19 |
-| `tests/test_esi.py` | `build_asset_index` (flat), `build_location_asset_index` (per-location), `extract_manufacturing_stations` (frequency ranking) | 10 |
+| `tests/test_esi.py` | `build_asset_index` (flat), `build_location_asset_index` (per-location), `extract_manufacturing_stations` (frequency ranking), `extract_blueprint_stations` (count ranking, empty, missing-location), `get_cached_blueprints` (TTL caching, corp vs char fetch) | 15 |
 | `tests/test_hauling.py` | `calculate_deficit`: all-at-station, split locations, nothing owned, volumes, multiple elsewhere, excess inventory; `calculate_build_capacity` | 13 |
 | `tests/test_setup_sde.py` | SDE download/conversion bootstrap helpers | 9 |
 | `tests/test_plan.py` | Pure classifier: `merge_trees` (shared-component aggregation), `classify` (ready/in-progress/blocked/buy bucketing, missing-input detection, job/inventory netting, `buy_set` moves node to buy), `enrich_buy` (deficit split), `resolve_build_station` (saved-wins/most-used/none), `attach_haul_breakdown` (elsewhere→named haul list, sorting, no-mutation) | 23 |
-| `tests/test_build_list.py` | Build-list persistence: load/save/`add_target` upsert-by-type_id/`remove_target`/`toggle_buy` (idempotent flip, preserves targets)/`set_build_station`, legacy bare-list + missing-`build_station` compat | 12 |
-| `tests/test_app_plan.py` | Flask route wiring for the build list + action plan + materials view + station picker (`/`, `/build-list/add`, `/build-list/remove`, `/plan`, `/api/plan`, `/materials` tree/flat, `/materials/toggle/<id>`, `/build-station`) | 15 |
+| `tests/test_build_list.py` | Build-list persistence: load/save/`add_target` upsert-by-type_id/`remove_target`/`toggle_buy` (idempotent flip, preserves targets)/`set_build_station`, legacy bare-list + missing-`build_station` compat | 14 |
+| `tests/test_app_plan.py` | Flask route wiring for the build list + action plan + materials view + station picker (`/`, `/build-list/add`, `/build-list/remove`, `/plan`, `/api/plan`, `/materials` tree/flat, `/materials/toggle/<id>`, `/build-station`); `_get_station_list` blueprint ranking/naming, job-history fallback, 15-cap, char+corp count merge | 19 |
 | `tests/test_cli_plan.py` | CLI `plan` command wiring (empty-list path, no SDE/ESI/network) | 1 |
 
 SDE tests require `data/sqlite-latest.sqlite` (skip gracefully if missing). ESI, hauling, plan, and build-list tests are pure-function/route tests with no database or network dependencies.

@@ -231,6 +231,23 @@ def extract_manufacturing_stations(jobs: list[dict]) -> list[int]:
     return [fid for fid, _ in facility_counts.most_common()]
 
 
+def extract_blueprint_stations(blueprints: list[dict]) -> list[int]:
+    """Unique blueprint location IDs ranked by how many blueprints are at each.
+
+    Blueprints are what you need on-site to install a manufacturing job, so their
+    locations are the candidate build stations. Skips records with no usable
+    location_id. Ranked most-blueprints-first (your main hub leads).
+    """
+    from collections import Counter
+
+    counts: Counter = Counter()
+    for bp in blueprints:
+        lid = bp.get("location_id")
+        if lid:
+            counts[lid] += 1
+    return [lid for lid, _ in counts.most_common()]
+
+
 # ------------------------------------------------------------------
 # Blueprints
 # ------------------------------------------------------------------
@@ -440,6 +457,10 @@ _price_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 _raw_asset_cache: dict[int, tuple[float, list[dict]]] = {}
 ASSET_CACHE_TTL = 600  # 10 minutes
 
+# {entity_id: (timestamp, blueprints)}
+_raw_blueprint_cache: dict[int, tuple[float, list[dict]]] = {}
+BLUEPRINT_CACHE_TTL = 600  # 10 minutes — mirrors ASSET_CACHE_TTL
+
 # {location_id: (timestamp, name)}
 _location_name_cache: dict[int, tuple[float, str]] = {}
 LOCATION_NAME_CACHE_TTL = 3600  # 1 hour — station/structure names rarely change
@@ -571,6 +592,22 @@ def _get_cached_raw_assets(
 
     _raw_asset_cache[entity_id] = (now, assets)
     return assets
+
+
+def get_cached_blueprints(
+    p: Preston,
+    entity_id: int,
+    is_corp: bool = False,
+) -> list[dict]:
+    """Fetch and cache the raw blueprint list for a character or corporation."""
+    now = _time.monotonic()
+    if entity_id in _raw_blueprint_cache:
+        ts, bps = _raw_blueprint_cache[entity_id]
+        if now - ts < BLUEPRINT_CACHE_TTL:
+            return bps
+    bps = fetch_corp_blueprints(p, entity_id) if is_corp else fetch_blueprints(p, entity_id)
+    _raw_blueprint_cache[entity_id] = (now, bps)
+    return bps
 
 
 def get_cached_asset_index(

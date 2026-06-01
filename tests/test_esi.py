@@ -1,5 +1,6 @@
 """Tests for esi.py — asset indexing and location tracking."""
 
+import esi as esi_mod
 from esi import build_asset_index, build_location_asset_index
 
 
@@ -104,3 +105,56 @@ def test_extract_manufacturing_stations_completed_jobs():
     ]
     stations = extract_manufacturing_stations(jobs)
     assert stations == [1000]
+
+
+# -- Blueprint station detection --
+
+from esi import extract_blueprint_stations
+
+
+def test_extract_blueprint_stations_ranks_by_count():
+    """Unique blueprint locations, ranked by how many blueprints sit there."""
+    bps = [
+        {"type_id": 1, "location_id": 1000},
+        {"type_id": 2, "location_id": 1000},
+        {"type_id": 3, "location_id": 1000},
+        {"type_id": 4, "location_id": 2000},
+        {"type_id": 5, "location_id": 2000},
+        {"type_id": 6, "location_id": 3000},
+    ]
+    stations = extract_blueprint_stations(bps)
+    assert stations == [1000, 2000, 3000]   # 3, 2, 1 by count desc
+
+
+def test_extract_blueprint_stations_empty():
+    assert extract_blueprint_stations([]) == []
+
+
+def test_extract_blueprint_stations_ignores_missing_location():
+    bps = [{"type_id": 1}, {"type_id": 2, "location_id": 0}, {"type_id": 3, "location_id": 5000}]
+    # missing key and falsy 0 are skipped; only 5000 remains
+    assert extract_blueprint_stations(bps) == [5000]
+
+
+def test_get_cached_blueprints_caches_within_ttl(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_fetch(p, character_id):
+        calls["n"] += 1
+        return [{"type_id": 1, "location_id": 1000}]
+
+    esi_mod._raw_blueprint_cache.clear()
+    monkeypatch.setattr(esi_mod, "fetch_blueprints", fake_fetch)
+
+    a = esi_mod.get_cached_blueprints(None, 42, is_corp=False)
+    b = esi_mod.get_cached_blueprints(None, 42, is_corp=False)
+    assert a == b == [{"type_id": 1, "location_id": 1000}]
+    assert calls["n"] == 1   # second call served from cache
+
+
+def test_get_cached_blueprints_corp_uses_corp_fetch(monkeypatch):
+    esi_mod._raw_blueprint_cache.clear()
+    monkeypatch.setattr(esi_mod, "fetch_corp_blueprints",
+                        lambda p, cid: [{"type_id": 9, "location_id": 7000}])
+    out = esi_mod.get_cached_blueprints(None, 99, is_corp=True)
+    assert out == [{"type_id": 9, "location_id": 7000}]
