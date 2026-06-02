@@ -195,20 +195,6 @@ def test_enrich_buy_nothing_owned_buys_everything():
     assert row["at_station"] == 0
 
 
-def test_resolve_build_station_saved_wins():
-    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    assert plan.resolve_build_station(2, stations) == 2
-
-
-def test_resolve_build_station_falls_back_to_most_used():
-    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    assert plan.resolve_build_station(None, stations) == 1   # most-used first
-
-
-def test_resolve_build_station_none_when_no_stations():
-    assert plan.resolve_build_station(None, []) is None
-
-
 def test_attach_haul_breakdown_names_and_sorts():
     rows = [{"type_id": 34, "name": "Tritanium", "to_buy": 100,
              "elsewhere": {60003760: 200, 60008494: 500}}]

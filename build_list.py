@@ -83,15 +83,3 @@ def set_target_station(type_id: int, station_id: int | None, path=DEFAULT_PATH) 
             t["build_station"] = station_id
             break
     save(data, path)
-
-
-def set_build_station(station_id: int | None, path=DEFAULT_PATH) -> None:
-    """Persist the global build station (an int facility id, or None to clear).
-
-    Retired in favor of per-target build_station via set_target_station; kept
-    until the /build-station route is rewired. The written top-level key is
-    now ignored by load().
-    """
-    data = load(path)
-    data["build_station"] = station_id
-    save(data, path)

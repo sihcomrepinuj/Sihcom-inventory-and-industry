@@ -25,7 +25,7 @@ def client(tmp_path, monkeypatch):
     # bound default of each so the routes write to the temp file, never the repo.
     for fn in (build_list.load, build_list.save, build_list.add_target,
                build_list.remove_target, build_list.toggle_buy,
-               build_list.set_build_station, build_list.set_target_station):
+               build_list.set_target_station):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:

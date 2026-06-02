@@ -178,19 +178,6 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
     return out
 
 
-def resolve_build_station(saved, stations):
-    """Pick the effective build station.
-
-    saved (int|None) wins if set; else the most-used station (stations[0]);
-    else None. stations: [{"id":..., "name":...}] ranked by use.
-    """
-    if saved is not None:
-        return saved
-    if stations:
-        return stations[0]["id"]
-    return None
-
-
 def attach_owned_totals(rows, owned_index, volumes):
     """Add total / owned / to_buy (+ volumes) using a FLAT owned-anywhere index.
 

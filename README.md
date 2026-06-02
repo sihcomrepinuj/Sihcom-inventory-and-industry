@@ -93,48 +93,50 @@ want to build*, then open an **action plan** that tells you what to do next.
      build.
    - CLI: targets live in `build_list.json` (auto-created, per-user, gitignored).
      The web "add" form writes to it; you can also hand-edit it. Its shape is
-     `{"targets": [...], "buy_set": [...], "build_station": <id|null>}` —
-     `targets` are the items to build, `buy_set` is the global list of component
-     type_ids you've chosen to buy rather than build, and `build_station` is the
-     facility id you're building at (set via the web picker; defaults to your
-     top-ranked blueprint station when null).
+     `{"targets": [...], "buy_set": [...]}` —
+     `targets` are the items to build and `buy_set` is the global list of
+     component type_ids you've chosen to buy rather than build. Each target also
+     carries its own `build_station` (the facility id you're building *that
+     product* at, set via the per-product web picker; `null` means "owned
+     anywhere"). There is no global top-level build station.
 
    **Quantity is the driver.** You specify how many *units* of the product you
    want; the number of manufacturing *runs* is derived from the blueprint's
    per-run output (e.g. ammo yields 100/run, ships 1/run), rounding runs up so
    you build at least the requested units.
 
-2. **Open the action plan.** It merges every target's full material tree into a
-   single requirement graph, reads your live ESI assets and industry jobs, and
-   classifies everything into four buckets:
+2. **Open the action plan.** It produces **one block per product** — each
+   target's full material tree classified against *that product's own* build
+   station — reading your live ESI assets and industry jobs. Within each block
+   everything lands in four buckets:
    - **READY TO START NOW** — buildable items whose inputs are all on hand.
    - **IN PROGRESS** — items currently covered by an active/ready/paused job
      (shows when the job completes).
    - **BLOCKED** — buildable items waiting on inputs you don't yet have (and
      lists exactly which inputs, and how short).
-   - **BUY LIST** — non-manufacturable items (or things you've chosen to buy),
-     aggregated across all targets. The "to buy" quantity accounts for stock you
-     already hold (both at your build station and at your other stations), so it
-     reflects only what you actually need to purchase. Per material it shows a
-     **"Haul from" breakdown**: how much is already **at your build station**,
+   - **BUY LIST** — non-manufacturable items (or things you've chosen to buy)
+     for that product. The "to buy" quantity accounts for stock you already
+     hold (both at that product's build station and at your other stations), so
+     it reflects only what you actually need to purchase. Per material it shows
+     a **"Haul from" breakdown**: how much is already **at the build station**,
      how much you **own elsewhere and can haul** (with the station names and
-     quantities), and how much to **buy** — plus the buy volume. A raw material
-     shared by multiple targets (e.g. Tritanium) appears as a single summed
-     line, not one per target.
+     quantities), and how much to **buy** — plus the buy volume.
 
-   **Building at (build-station picker).** On the web Plan and Materials pages a
-   "Building at" dropdown lists **every station where you hold blueprints**
+   **Building at (per-product build-station picker).** On the web Plan page
+   **each product block has its own "Building at" dropdown** — there is no
+   global default. The dropdown lists **every station where you hold blueprints**
    (your character's BPOs/BPCs plus your corp's when you're in a corp), **ranked
    by how many blueprints sit at each** so your main blueprint hub leads — rather
    than only the facilities where you've run industry jobs before. It shows up to
    **15** stations, and **falls back** to your manufacturing-job history when no
    blueprints are found (e.g. a brand-new character). Choosing one persists to
-   `build_list.json` (`build_station`) and drives the plan: it's the station the
-   "at your build station" stock is netted against, and everything you own
-   elsewhere shows up under "Haul from". Clearing the choice falls back to the
-   top-ranked station. Asset netting is unchanged — your corp's stock is netted
-   when you're in a corp, your character's otherwise. (The picker is web-only; the
-   CLI honors whatever station is saved.)
+   that target's `build_station` in `build_list.json` and drives only that
+   product's block: it's the station the "at the build station" stock is netted
+   against, and everything you own elsewhere shows up under "Haul from".
+   **Leaving a product unset** ("owned anywhere") nets its inputs against your
+   stock everywhere with no at-station/haul split. Asset netting is unchanged —
+   your corp's stock is netted when you're in a corp, your character's otherwise.
+   (The picker is web-only; the CLI honors whatever station each target has saved.)
 
    ```bash
    python eve_inventory.py plan
@@ -150,11 +152,12 @@ want to build*, then open an **action plan** that tells you what to do next.
    job checks. (The CLI never forces the SSO browser flow from `plan` — it only
    uses ESI if a token already exists.)
 
-   **The CLI `plan` honors the saved build station.** It reads `build_station`
-   from `build_list.json` (set on the web picker), prints "Building at" and the
-   per-material "Haul from" breakdown, and otherwise falls back to your most-used
-   station from job history. There is no CLI command to *set* the station — choose
-   it on the web.
+   **The CLI `plan` groups per product.** It prints one block per target, each
+   classified against that target's saved `build_station` from `build_list.json`
+   (set on the web picker) — printing "Building at" and the per-material "Haul
+   from" breakdown for that product, or netting owned-anywhere when the target's
+   station is unset. There is no CLI command to *set* the station — choose it on
+   the web.
 
 ### Materials view (build vs buy) — web only
 
@@ -169,15 +172,13 @@ It has two modes:
   each component. Toggling a component to "buy" adds its type_id to the global
   `buy_set`; toggling back removes it. (Toggling posts to the server and
   reloads — there is no client-side JavaScript toggle.)
-- **Flat supply list** — the trees flattened and aggregated into one shopping
-  list. It is now **location-aware** and uses the same basis as the action
-  plan's buy list: per item it shows the **total required**, how much is **at
-  your build station**, the **"Haul from"** breakdown of stock you own elsewhere
-  (station names + quantities), and the **to-buy** after netting both — plus
-  volume. The same "Building at" picker as the Plan page drives it, so the flat
-  view and the plan **agree on what to buy**. Without ESI login (or with no
-  station chosen) to-buy equals the total required. A raw material shared by
-  several targets aggregates to a single summed line.
+- **Flat supply list** — the trees flattened and aggregated into a single
+  **bill of materials**. There is **no station picker** here: it nets your
+  gross requirement against everything you own **anywhere**. Per item it shows
+  the **total required**, (when logged in) the **to-buy** after subtracting
+  everything you own across all locations, and the **volume** — no at-station or
+  haul columns. Without ESI login to-buy equals the total required. A raw
+  material shared by several targets aggregates to a single summed line.
 
 These build/buy choices **drive the action plan**: a component set to "buy"
 moves out of its build node and shows up as a **buy line** in `plan` (web and
@@ -234,12 +235,13 @@ The Flask app mirrors the same flow:
 
 - `/` — **build list** (search-to-add + add/remove targets; the home page)
 - `/materials` — **materials view** (`?view=tree` build/buy toggles,
-  `?view=flat` location-aware aggregated supply list: total required + at-station
-  + haul-from + to-buy, with the "Building at" picker)
-- `/plan` — **action plan** (ready / in-progress / blocked / buy), with the
-  "Building at" picker and per-material "Haul from" breakdown
-- `/build-station` (POST) — persists the chosen build station from the picker
-  (shared by the Plan and Materials pages)
+  `?view=flat` aggregated bill of materials: total required + to-buy
+  (owned-anywhere) + volume; no station picker)
+- `/plan` — **action plan**, one block per product (ready / in-progress /
+  blocked / buy), each with its own "Building at" picker and per-material "Haul
+  from" breakdown
+- `/build-station` (POST) — persists the chosen build station for **one product**
+  (the per-product picker on the Plan page)
 - `/search` — blueprint/item search (formerly the home page)
 - `/blueprint/<id>`, `/chain/<id>`, `/shopping/<id>`, `/chain/shopping/<id>`,
   `/market/<id>`, `/profit/<id>` — the per-item drill-down pages, unchanged.
@@ -263,7 +265,7 @@ set STRUCTURE_BONUS=4.2
 Railway containers have an **ephemeral filesystem**: every deploy starts a fresh
 container, so anything written to disk at runtime is lost on the next deploy. The
 web app's only runtime-written file is `build_list.json` (your targets, build/buy
-choices, and saved build station). Without a persistent volume, **your build list
+choices, and each target's saved build station). Without a persistent volume, **your build list
 resets on every deploy**.
 
 To make it survive deploys:
