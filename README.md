@@ -133,8 +133,10 @@ want to build*, then open an **action plan** that tells you what to do next.
    that target's `build_station` in `build_list.json` and drives only that
    product's block: it's the station the "at the build station" stock is netted
    against, and everything you own elsewhere shows up under "Haul from".
-   **Leaving a product unset** ("owned anywhere") nets its inputs against your
-   stock everywhere with no at-station/haul split. Asset netting is unchanged —
+   **Leaving a product unset** ("owned anywhere") still nets its inputs against
+   everything you own, but with nothing designated as "at station" your owned
+   stock shows up under "Haul from" — pick a station to see what's already
+   on-site there versus what you'd haul in. Asset netting is unchanged —
    your corp's stock is netted when you're in a corp, your character's otherwise.
    (The picker is web-only; the CLI honors whatever station each target has saved.)
 
