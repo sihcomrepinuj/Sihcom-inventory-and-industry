@@ -16,6 +16,7 @@ class Target:
     blueprint_type_id: int | None
     needed: int                 # units of the product wanted (runs * qty_per_run)
     children: list  # list[MaterialNode] — the product's direct inputs
+    build_station: int | None = None  # per-product build station (None = unset)
 
 
 @dataclass
@@ -177,17 +178,25 @@ def enrich_buy(buy_rows, loc_index, build_station, volumes):
     return out
 
 
-def resolve_build_station(saved, stations):
-    """Pick the effective build station.
+def attach_owned_totals(rows, owned_index, volumes):
+    """Add total / owned / to_buy (+ volumes) using a FLAT owned-anywhere index.
 
-    saved (int|None) wins if set; else the most-used station (stations[0]);
-    else None. stations: [{"id":..., "name":...}] ranked by use.
+    For the Materials flat view: nets gross requirement against everything you
+    own across all locations (no station concept). rows: [{type_id,name,quantity}].
+    Pure: returns new dicts, never mutates inputs.
     """
-    if saved is not None:
-        return saved
-    if stations:
-        return stations[0]["id"]
-    return None
+    out = []
+    for r in rows:
+        tid = r["type_id"]
+        total = r["quantity"]
+        owned = owned_index.get(tid, 0)
+        to_buy = max(0, total - owned)
+        unit_vol = volumes.get(tid, 0.0)
+        out.append({
+            **r, "total": total, "owned": owned, "to_buy": to_buy,
+            "total_volume": total * unit_vol, "to_buy_volume": to_buy * unit_vol,
+        })
+    return out
 
 
 def attach_haul_breakdown(rows, loc_names):

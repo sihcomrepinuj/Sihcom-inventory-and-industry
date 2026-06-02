@@ -195,20 +195,6 @@ def test_enrich_buy_nothing_owned_buys_everything():
     assert row["at_station"] == 0
 
 
-def test_resolve_build_station_saved_wins():
-    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    assert plan.resolve_build_station(2, stations) == 2
-
-
-def test_resolve_build_station_falls_back_to_most_used():
-    stations = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    assert plan.resolve_build_station(None, stations) == 1   # most-used first
-
-
-def test_resolve_build_station_none_when_no_stations():
-    assert plan.resolve_build_station(None, []) is None
-
-
 def test_attach_haul_breakdown_names_and_sorts():
     rows = [{"type_id": 34, "name": "Tritanium", "to_buy": 100,
              "elsewhere": {60003760: 200, 60008494: 500}}]
@@ -249,37 +235,34 @@ def test_attach_haul_breakdown_ties_break_by_name():
                               {"name": "Zebra", "qty": 100}]
 
 
-def test_plan_and_materials_agree_to_buy_with_assets_and_station():
-    # Plan buy list and Materials flat must agree on to_buy even with owned
-    # assets and a chosen station. to_buy = need - total_owned (station only
-    # changes the at-station/haul split, not the total); both run gross need
-    # through calculate_deficit.
-    from sde import flatten_material_tree
-    import hauling
+def test_target_has_build_station_field_default_none():
+    t = plan.Target(type_id=1, name="X", blueprint_type_id=2, needed=1, children=[])
+    assert t.build_station is None
 
-    trit = _node(34, "Tritanium", 1000, terminal=True)
-    pyer = _node(35, "Pyerite", 500, terminal=True)
-    target = plan.Target(671, "Thing", 2001, 1, [trit, pyer])
-    station = 60003760
-    loc_index = {34: {60003760: 300, 60008494: 200},   # 300 at station + 200 elsewhere
-                 35: {60008494: 500}}                   # all 500 elsewhere
+
+def test_target_build_station_settable():
+    t = plan.Target(type_id=1, name="X", blueprint_type_id=2, needed=1, children=[],
+                    build_station=60003760)
+    assert t.build_station == 60003760
+
+
+def test_attach_owned_totals_nets_owned_anywhere_and_volumes():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 5000},
+            {"type_id": 35, "name": "Pyerite", "quantity": 1000}]
+    owned = {34: 2000}                       # flat owned-anywhere index
     volumes = {34: 0.01, 35: 0.01}
+    out = plan.attach_owned_totals(rows, owned, volumes)
+    trit = next(r for r in out if r["type_id"] == 34)
+    assert trit["total"] == 5000
+    assert trit["owned"] == 2000
+    assert trit["to_buy"] == 3000
+    assert trit["total_volume"] == 50.0
+    pyer = next(r for r in out if r["type_id"] == 35)
+    assert pyer["to_buy"] == 1000            # nothing owned
 
-    # Plan path: merge -> classify -> enrich_buy
-    graph = plan.merge_trees([target], set())
-    buckets = plan.classify(graph, loc_index, [], station, set())
-    buckets["buy"] = plan.enrich_buy(buckets["buy"], loc_index, station, volumes)
-    plan_to_buy = {r["type_id"]: r["to_buy"] for r in buckets["buy"]}
 
-    # Materials path: flatten -> calculate_deficit
-    flat = flatten_material_tree([trit, pyer], set())
-    deficit = hauling.calculate_deficit(flat, loc_index, station, volumes)
-    mat_to_buy = {d["type_id"]: d["to_buy"] for d in deficit}
-
-    # Every material the plan says to buy, materials agrees on the amount.
-    for tid, qty in plan_to_buy.items():
-        assert mat_to_buy[tid] == qty
-    # Concrete: Tritanium need 1000, own 500 total -> buy 500;
-    #           Pyerite need 500, own 500 -> buy 0.
-    assert mat_to_buy[34] == 500
-    assert mat_to_buy[35] == 0
+def test_attach_owned_totals_never_negative_and_nonmutating():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 100}]
+    out = plan.attach_owned_totals(rows, {34: 999}, {34: 0.01})
+    assert out[0]["to_buy"] == 0
+    assert "total" not in rows[0]            # input untouched

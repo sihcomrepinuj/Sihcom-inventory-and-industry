@@ -5,25 +5,27 @@ import build_list
 
 def _target(tid, qty=1):
     return {"type_id": tid, "name": f"Item {tid}", "qty": qty, "runs": None,
-            "me": 10, "structure_bonus": 0.0}
+            "me": 10, "structure_bonus": 0.0, "build_station": None}
 
 
 def test_load_missing_returns_empty_shape(tmp_path):
     assert build_list.load(tmp_path / "nope.json") == {
-        "targets": [], "buy_set": [], "build_station": None}
+        "targets": [], "buy_set": []}
 
 
 def test_load_legacy_bare_list_is_wrapped(tmp_path):
     path = tmp_path / "bl.json"
     path.write_text('[{"type_id": 671, "name": "Revelation"}]', encoding="utf-8")
     data = build_list.load(path)
-    assert data["targets"] == [{"type_id": 671, "name": "Revelation"}]
+    # load normalizes each target with a per-target build_station (None)
+    assert data["targets"] == [
+        {"type_id": 671, "name": "Revelation", "build_station": None}]
     assert data["buy_set"] == []
 
 
 def test_save_load_round_trip(tmp_path):
     path = tmp_path / "bl.json"
-    data = {"targets": [_target(671, 5)], "buy_set": [2867], "build_station": None}
+    data = {"targets": [_target(671, 5)], "buy_set": [2867]}
     build_list.save(data, path)
     assert build_list.load(path) == data
 
@@ -63,46 +65,49 @@ def test_toggle_buy_preserves_targets(tmp_path):
     assert data["buy_set"] == [2867]
 
 
-def test_load_defaults_build_station_none(tmp_path):
-    assert build_list.load(tmp_path / "nope.json")["build_station"] is None
-
-
-def test_set_build_station_round_trip(tmp_path):
-    path = tmp_path / "bl.json"
-    build_list.set_build_station(60003760, path)
-    assert build_list.load(path)["build_station"] == 60003760
-
-
-def test_set_build_station_preserves_targets_and_buyset(tmp_path):
+def test_add_target_defaults_build_station_none(tmp_path):
     path = tmp_path / "bl.json"
     build_list.add_target({"type_id": 671, "name": "Rev", "qty": 1, "runs": None,
                            "me": 10, "structure_bonus": 0.0}, path)
-    build_list.toggle_buy(2867, path)
-    build_list.set_build_station(60003760, path)
-    data = build_list.load(path)
-    assert [t["type_id"] for t in data["targets"]] == [671]
-    assert data["buy_set"] == [2867]
-    assert data["build_station"] == 60003760
+    t = build_list.load(path)["targets"][0]
+    assert t["build_station"] is None
 
 
-def test_load_legacy_dict_without_station_defaults_none(tmp_path):
+def test_set_target_station_sets_only_that_target(tmp_path):
     path = tmp_path / "bl.json"
-    path.write_text('{"targets": [], "buy_set": []}', encoding="utf-8")
-    assert build_list.load(path)["build_station"] is None
+    build_list.add_target({"type_id": 671, "name": "Rev", "qty": 1, "runs": None,
+                           "me": 10, "structure_bonus": 0.0}, path)
+    build_list.add_target({"type_id": 17636, "name": "Phoenix", "qty": 1, "runs": None,
+                           "me": 10, "structure_bonus": 0.0}, path)
+    build_list.set_target_station(671, 60003760, path)
+    targets = {t["type_id"]: t for t in build_list.load(path)["targets"]}
+    assert targets[671]["build_station"] == 60003760
+    assert targets[17636]["build_station"] is None
 
 
-def test_load_legacy_bare_list_has_build_station_none(tmp_path):
+def test_set_target_station_clear(tmp_path):
     path = tmp_path / "bl.json"
-    path.write_text('[{"type_id": 671, "name": "Rev"}]', encoding="utf-8")
+    build_list.add_target({"type_id": 671, "name": "Rev", "qty": 1, "runs": None,
+                           "me": 10, "structure_bonus": 0.0}, path)
+    build_list.set_target_station(671, 60003760, path)
+    build_list.set_target_station(671, None, path)
+    assert build_list.load(path)["targets"][0]["build_station"] is None
+
+
+def test_legacy_global_build_station_ignored(tmp_path):
+    path = tmp_path / "bl.json"
+    path.write_text('{"targets": [{"type_id": 671, "name": "Rev"}], '
+                    '"buy_set": [], "build_station": 60003760}', encoding="utf-8")
     data = build_list.load(path)
-    assert data["targets"] == [{"type_id": 671, "name": "Rev"}]
-    assert data["build_station"] is None
+    # old global value no longer surfaces as a top-level key; target has no station
+    assert "build_station" not in data
+    assert data["targets"][0].get("build_station") is None
 
 
 def test_save_creates_missing_parent_dir(tmp_path):
     # On a fresh Railway volume the target dir may not exist yet; save() makes it.
     path = tmp_path / "nested" / "dir" / "bl.json"
-    build_list.save({"targets": [], "buy_set": [], "build_station": None}, path)
+    build_list.save({"targets": [], "buy_set": []}, path)
     assert path.exists()
 
 

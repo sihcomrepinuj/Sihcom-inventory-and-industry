@@ -74,11 +74,10 @@
 {% endfor %}
 
 {% else %}
-{# Flat view: the whole build list's components flattened into a location-aware
-   supply list. Uses the SAME calculate_deficit path as the /plan buy list, so the
-   two screens agree on what to buy. #}
-{% with next="materials", view="flat" %}{% include "_station_picker.html" %}{% endwith %}
-
+{# Flat view: the whole build list's components flattened into an aggregated bill
+   of materials. Build station is now per-product on the Plan page, so this view
+   has no station — it nets total required against everything owned anywhere to
+   show how much to buy. #}
 {% if not authed %}
 <p class="text-muted">Log in to see how much you still need to buy.</p>
 {% endif %}
@@ -89,25 +88,21 @@
         <tr>
             <th>Item</th>
             <th class="text-right">Total required</th>
-            <th class="text-right">Volume m&sup3;</th>
             {% if authed %}
-            <th class="text-right">At station</th>
-            <th>Haul from</th>
             <th class="text-right">To buy</th>
             {% endif %}
+            <th class="text-right">Volume m&sup3;</th>
         </tr>
     </thead>
     <tbody>
         {% for r in flat_rows %}
         <tr>
             <td>{{ r.name }}</td>
-            <td class="text-right">{{ r.quantity_needed | commas }}</td>
-            <td class="text-right">{{ r.total_volume | vol }}</td>
+            <td class="text-right">{{ r.total | commas }}</td>
             {% if authed %}
-            <td class="text-right">{{ r.at_station | commas }}</td>
-            <td>{% for h in r.haul %}{{ h.qty | commas }} @ {{ h.name }}{% if not loop.last %}, {% endif %}{% else %}&mdash;{% endfor %}</td>
             <td class="text-right">{{ r.to_buy | commas }}</td>
             {% endif %}
+            <td class="text-right">{{ r.total_volume | vol }}</td>
         </tr>
         {% endfor %}
     </tbody>

@@ -435,6 +435,7 @@ def _resolve_targets(sde: SDE, targets: list[dict]) -> list:
         out.append(plan.Target(
             type_id=t["type_id"], name=t["name"], blueprint_type_id=bp_id,
             needed=needed, children=children,
+            build_station=t.get("build_station"),
         ))
     return out
 
@@ -447,14 +448,68 @@ def cmd_plan():
               "Add targets via the web UI or build_list.json.")
         return
 
+    def _print_buckets(buckets):
+        """Print the four classification sections for one product block."""
+        ready = buckets["ready"]
+        in_progress = buckets["in_progress"]
+        blocked = buckets["blocked"]
+        buy = buckets["buy"]
+
+        if not (ready or in_progress or blocked or buy):
+            print("  (nothing to do)")
+            return
+
+        if ready:
+            print(f"\n  --- READY TO START NOW ---\n")
+            print(f"  {'Name':<35} {'Qty to Make':>12} {'Activity':<16}")
+            print(f"  {'-'*35} {'-'*12} {'-'*16}")
+            for r in ready:
+                act = ACTIVITY_NAMES.get(
+                    r.get("activity_id", 0), "Manufacturing")
+                print(f"  {r['name']:<35} {r['shortfall']:>12,} {act:<16}")
+
+        if in_progress:
+            print(f"\n  --- IN PROGRESS ---\n")
+            print(f"  {'Name':<35} {'Qty Short':>12} {'Completes':<22}")
+            print(f"  {'-'*35} {'-'*12} {'-'*22}")
+            for r in in_progress:
+                ends = r.get("end_date") or "-"
+                print(f"  {r['name']:<35} {r['shortfall']:>12,} {ends:<22}")
+
+        if blocked:
+            print(f"\n  --- BLOCKED ---\n")
+            for r in blocked:
+                print(f"  {r['name']}")
+                needs = ", ".join(
+                    f"{m['name']} x{m['shortfall']:,}"
+                    for m in r.get("missing", [])
+                )
+                print(f"    needs: {needs}")
+
+        if buy:
+            print(f"\n  --- BUY LIST ---\n")
+            print(f"  {'Name':<35} {'To Buy':>12} "
+                  f"{'Vol m³':>12} {'At Station':>12}")
+            print(f"  {'-'*35} {'-'*12} {'-'*12} {'-'*12}")
+            for r in buy:
+                to_buy = r.get("to_buy", r.get("shortfall", 0))
+                vol = r.get("to_buy_volume", 0.0)
+                at_station = r.get("at_station", 0)
+                print(f"  {r['name']:<35} {to_buy:>12,} "
+                      f"{vol:>12,.2f} {at_station:>12,}")
+                haul = r.get("haul") or []
+                if haul:
+                    haul_str = ", ".join(
+                        f"{h['qty']:,} @ {h['name']}" for h in haul
+                    )
+                    print(f"    Haul from: {haul_str}")
+
     with SDE() as sde:
         resolved = _resolve_targets(sde, targets)
         buy_set = set(data["buy_set"])
-        graph = plan.merge_trees(resolved, buy_set)
 
         loc_index: dict = {}
         jobs: list = []
-        build_station = None
         p = None
 
         # Use ESI only if it's already configured AND a saved token exists —
@@ -473,116 +528,55 @@ def cmd_plan():
                         p, character_id, is_corp=False,
                     )
                 # Active-only jobs feed classify (_in_job_qty counts only
-                # active/ready/paused). Station ranking uses a completed-
-                # inclusive history so we find the usual build station even
-                # with no active jobs — mirrors app._get_station_list.
+                # active/ready/paused).
                 jobs = esi.fetch_industry_jobs(p, character_id)
-                station_jobs = esi.fetch_industry_jobs(
-                    p, character_id, include_completed=True,
-                )
-                # Honor the SAVED build station (set on the web /plan or
-                # /materials page) first; fall back to the most-used station.
-                # extract_manufacturing_stations returns list[int] (not the
-                # [{"id":...}] dicts resolve_build_station wants), so replicate
-                # its saved-wins-else-most-used precedence inline.
-                saved = data.get("build_station")
-                station_ids = esi.extract_manufacturing_stations(station_jobs)
-                build_station = (
-                    saved if saved is not None
-                    else (station_ids[0] if station_ids else None)
-                )
             except Exception as e:
                 print(f"  ESI lookup failed ({e}); continuing without it.")
                 loc_index, jobs, p = {}, [], None
-                build_station = data.get("build_station")
         else:
             print("  No ESI auth — without it everything shows as "
                   "blocked/buy. Run 'auth' to enable inventory/job checks.")
-            # No ranked stations available unauthed, but still honor the
-            # saved choice so classify/enrich match the web's build station.
-            build_station = data.get("build_station")
 
-        buckets = plan.classify(graph, loc_index, jobs, build_station, buy_set)
-        volumes = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
-        buckets["buy"] = plan.enrich_buy(
-            buckets["buy"], loc_index, build_station, volumes,
-        )
+        print(f"\n{'='*90}")
+        print("ACTION PLAN")
+        print(f"{'='*90}")
+        print(f"\n  Plan: {len(resolved)} "
+              f"target{'s' if len(resolved) != 1 else ''}")
 
-        # Resolve elsewhere-location ids on the buy rows to station names and
-        # bake the display-ready `haul` list (mirrors app._compute_plan). Only
-        # resolve names when authed; unauthed → empty names → haul == [].
-        buy_rows = buckets["buy"]
-        loc_names = {}
-        if p:
-            elsewhere_ids = {
-                lid for r in buy_rows for lid in r.get("elsewhere", {})
-            }
-            loc_names = {
-                lid: esi.get_cached_location_name(p, lid, "other")
-                for lid in elsewhere_ids
-            }
-        buckets["buy"] = plan.attach_haul_breakdown(buy_rows, loc_names)
+        # One block per product, each classified against ITS OWN station
+        # (mirrors app._compute_plan).
+        for t in resolved:
+            graph = plan.merge_trees([t], buy_set)
+            station = t.build_station
+            buckets = plan.classify(graph, loc_index, jobs, station, buy_set)
+            volumes = sde.get_type_volumes(
+                [r["type_id"] for r in buckets["buy"]])
+            buckets["buy"] = plan.enrich_buy(
+                buckets["buy"], loc_index, station, volumes)
+            # Resolve elsewhere-location ids on the buy rows to station names
+            # and bake the display-ready `haul` list. Only resolve names when
+            # authed; unauthed → empty names → haul == [].
+            loc_names = {}
+            if p:
+                elsewhere_ids = {
+                    lid for r in buckets["buy"]
+                    for lid in r.get("elsewhere", {})
+                }
+                loc_names = {
+                    lid: esi.get_cached_location_name(p, lid, "other")
+                    for lid in elsewhere_ids
+                }
+            buckets["buy"] = plan.attach_haul_breakdown(
+                buckets["buy"], loc_names)
 
-        building_at = None
-        if p and build_station:
-            building_at = esi.get_cached_location_name(p, build_station, "other")
-
-    print(f"\n{'='*90}")
-    print("ACTION PLAN")
-    print(f"{'='*90}")
-    print(f"\n  Plan: {len(targets)} target{'s' if len(targets) != 1 else ''}")
-    if building_at:
-        print(f"  Building at: {building_at}")
-
-    ready = buckets["ready"]
-    in_progress = buckets["in_progress"]
-    blocked = buckets["blocked"]
-    buy = buckets["buy"]
-
-    if ready:
-        print(f"\n  --- READY TO START NOW ---\n")
-        print(f"  {'Name':<35} {'Qty to Make':>12} {'Activity':<16}")
-        print(f"  {'-'*35} {'-'*12} {'-'*16}")
-        for r in ready:
-            act = ACTIVITY_NAMES.get(r.get("activity_id", 0), "Manufacturing")
-            print(f"  {r['name']:<35} {r['shortfall']:>12,} {act:<16}")
-
-    if in_progress:
-        print(f"\n  --- IN PROGRESS ---\n")
-        print(f"  {'Name':<35} {'Qty Short':>12} {'Completes':<22}")
-        print(f"  {'-'*35} {'-'*12} {'-'*22}")
-        for r in in_progress:
-            ends = r.get("end_date") or "-"
-            print(f"  {r['name']:<35} {r['shortfall']:>12,} {ends:<22}")
-
-    if blocked:
-        print(f"\n  --- BLOCKED ---\n")
-        for r in blocked:
-            print(f"  {r['name']}")
-            needs = ", ".join(
-                f"{m['name']} x{m['shortfall']:,}" for m in r.get("missing", [])
-            )
-            print(f"    needs: {needs}")
-
-    if buy:
-        print(f"\n  --- BUY LIST ---\n")
-        print(f"  {'Name':<35} {'To Buy':>12} {'Vol m³':>12} {'At Station':>12}")
-        print(f"  {'-'*35} {'-'*12} {'-'*12} {'-'*12}")
-        for r in buy:
-            to_buy = r.get("to_buy", r.get("shortfall", 0))
-            vol = r.get("to_buy_volume", 0.0)
-            at_station = r.get("at_station", 0)
-            print(f"  {r['name']:<35} {to_buy:>12,} "
-                  f"{vol:>12,.2f} {at_station:>12,}")
-            haul = r.get("haul") or []
-            if haul:
-                haul_str = ", ".join(
-                    f"{h['qty']:,} @ {h['name']}" for h in haul
-                )
-                print(f"    Haul from: {haul_str}")
-
-    if not (ready or in_progress or blocked or buy):
-        print("\n  Nothing to do — everything needed is already on hand.")
+            print(f"\n=== {t.name} x {t.needed:,} ===")
+            if p:
+                if station:
+                    name = esi.get_cached_location_name(p, station, "other")
+                    print(f"  Building at: {name}")
+                else:
+                    print("  Building at: — not set —")
+            _print_buckets(buckets)
 
 
 # ------------------------------------------------------------------
@@ -1097,8 +1091,10 @@ Build list:
                                    a component set to "buy" becomes a buy line here.
                                    The flat supply view (total required + to-buy
                                    after inventory) also lives on web /materials.
-                                   The build station is set on the web /plan or
-                                   /materials page; the CLI honors the saved choice.
+                                   The build station is set PER PRODUCT on the
+                                   web /plan page (each product block has its own
+                                   station picker); the CLI honors each product's
+                                   saved station.
 
 Environment:
   STRUCTURE_BONUS    Structure material bonus % (default: 0)

@@ -25,7 +25,7 @@ def client(tmp_path, monkeypatch):
     # bound default of each so the routes write to the temp file, never the repo.
     for fn in (build_list.load, build_list.save, build_list.add_target,
                build_list.remove_target, build_list.toggle_buy,
-               build_list.set_build_station):
+               build_list.set_target_station):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -122,41 +122,96 @@ def test_plan_unauthed_shows_login_banner(client):
 
 
 def test_api_plan_unauthed_returns_json(client):
-    """GET /api/plan returns the four buckets as JSON."""
+    """GET /api/plan returns one block per product, each with its buckets."""
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
     resp = client.get("/api/plan")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["type_id"] == 2456
+    assert set(data[0]["buckets"].keys()) == {"ready", "in_progress", "blocked", "buy"}
 
 
-def test_build_station_persists(client):
-    """POST /build-station saves the station id and redirects to the plan."""
+def test_build_station_sets_per_target(client):
+    """POST /build-station persists the station on ONE target, redirects to /plan."""
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
     resp = client.post(
         "/build-station",
-        data={"station_id": "60003760", "next": "plan_view"},
+        data={"type_id": "2456", "station_id": "60003760"},
     )
     assert resp.status_code == 302
-    assert build_list.load()["build_station"] == 60003760
+    assert "/plan" in resp.headers["Location"]
+    target = next(t for t in build_list.load()["targets"] if t["type_id"] == 2456)
+    assert target["build_station"] == 60003760
 
 
-def test_build_station_empty_clears(client):
-    """An empty station_id clears the saved station (back to most-used default)."""
-    build_list.set_build_station(60003760)
-    resp = client.post("/build-station", data={"station_id": ""})
-    assert resp.status_code == 302
-    assert build_list.load()["build_station"] is None
-
-
-def test_build_station_next_materials_redirects(client):
-    """next=materials redirects to /materials carrying the view param."""
+def test_build_station_empty_clears_per_target(client):
+    """An empty station_id clears that target's build_station."""
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    build_list.set_target_station(2456, 60003760)
     resp = client.post(
         "/build-station",
-        data={"station_id": "60003760", "next": "materials", "view": "flat"},
+        data={"type_id": "2456", "station_id": ""},
     )
     assert resp.status_code == 302
-    assert "/materials?view=flat" in resp.headers["Location"]
+    target = next(t for t in build_list.load()["targets"] if t["type_id"] == 2456)
+    assert target["build_station"] is None
+
+
+def test_compute_plan_returns_one_block_per_product(monkeypatch):
+    """_compute_plan yields one block per resolved target, each with buckets."""
+    import app
+    import plan
+    t1 = plan.Target(type_id=1, name="A", blueprint_type_id=10, needed=1,
+                     children=[], build_station=111)
+    t2 = plan.Target(type_id=2, name="B", blueprint_type_id=20, needed=1,
+                     children=[], build_station=None)
+    monkeypatch.setattr(app, "_resolve_targets", lambda sde, targets: [t1, t2])
+
+    class _SDE:
+        def get_type_volumes(self, ids):
+            return {}
+
+    monkeypatch.setattr(app, "get_sde", lambda: _SDE())
+    monkeypatch.setattr(app, "get_authed_preston_from_session", lambda: None)
+    monkeypatch.setattr(app.build_list, "load",
+                        lambda: {"targets": [{"type_id": 1}, {"type_id": 2}], "buy_set": []})
+    with app.app.test_request_context():
+        blocks, authed, ctx = app._compute_plan()
+    assert [b["type_id"] for b in blocks] == [1, 2]
+    assert authed is False
+    assert all("buckets" in b and set(b["buckets"]) == {"ready", "in_progress", "blocked", "buy"}
+               for b in blocks)
+
+
+def test_plan_unauthed_shows_both_product_names(client):
+    """GET /plan (unauthed) with two targets renders both product blocks."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    build_list.add_target({
+        "type_id": 2454, "name": "Hornet I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/plan")
+    assert resp.status_code == 200
+    assert b"Warrior I" in resp.data
+    assert b"Hornet I" in resp.data
 
 
 def test_plan_unauthed_no_station_picker(client):
@@ -193,8 +248,13 @@ def test_materials_tree_view_renders(client):
     assert b"Buy instead" in resp.data
 
 
-def test_materials_flat_view_unauthed_hides_to_buy(client):
-    """GET /materials?view=flat (unauthed) shows totals but hides location columns."""
+def test_materials_flat_view_unauthed_aggregated_no_station(client):
+    """GET /materials?view=flat (unauthed) shows the aggregated BOM, no station/haul.
+
+    The flat view is now a whole-list aggregated bill of materials (build station
+    is per-product on the Plan page), so the old location-aware columns are gone
+    entirely and the to-buy column is gated behind auth.
+    """
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
     build_list.add_target({
@@ -204,59 +264,11 @@ def test_materials_flat_view_unauthed_hides_to_buy(client):
     resp = client.get("/materials?view=flat")
     assert resp.status_code == 200
     assert b"Total required" in resp.data
-    # The location-aware columns (at-station / haul / to-buy) are gated behind auth.
+    # No station picker, no haul, no per-product on Materials.
     assert b"Haul from" not in resp.data
+    assert b"At station" not in resp.data
+    # To-buy is gated behind auth.
     assert b"To buy" not in resp.data
-
-
-def test_materials_and_plan_share_buy_basis(client):
-    """Regression: pins the empty-asset/shared-path buy basis.
-
-    Both flow through the same flatten + calculate_deficit / enrich_buy path with
-    an empty (unauthed) location index, so for a given material the gross need —
-    and therefore the amount to buy — must match across the two screens.
-
-    We assert at the function level (no brittle HTML scraping): the to_buy figure
-    computed for the flat Materials view equals the plan's buy bucket to_buy for
-    the same material type. Tritanium (34) is a stable Warrior I input.
-    """
-    if not _sde_available():
-        pytest.skip("SDE database not available — run setup_sde.py first")
-    import build_list as bl
-    import hauling
-    import plan as plan_mod
-    from sde import flatten_material_tree
-
-    build_list.add_target({
-        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
-        "structure_bonus": 0.0,
-    })
-
-    sde = app_module.get_sde()
-    data = bl.load()
-    targets = data["targets"]
-    buy_set = set(data["buy_set"])
-
-    # Materials flat basis: flatten + calculate_deficit with empty loc_index.
-    resolved = app_module._resolve_targets(sde, targets)
-    nodes = [child for t in resolved for child in t.children]
-    flat = flatten_material_tree(nodes, buy_set)
-    volumes = sde.get_type_volumes([r["type_id"] for r in flat])
-    deficit = hauling.calculate_deficit(flat, {}, None, volumes)
-    mat_buy = {d["type_id"]: d["to_buy"] for d in deficit}
-
-    # Plan buy basis: merge_trees + classify + enrich_buy with empty loc_index.
-    graph = plan_mod.merge_trees(resolved, buy_set)
-    buckets = plan_mod.classify(graph, {}, [], None, buy_set)
-    plan_vol = sde.get_type_volumes([r["type_id"] for r in buckets["buy"]])
-    enriched = plan_mod.enrich_buy(buckets["buy"], {}, None, plan_vol)
-    plan_buy = {r["type_id"]: r["to_buy"] for r in enriched}
-
-    # They must cover the same materials and agree on every to_buy figure.
-    assert mat_buy, "expected at least one material to buy"
-    assert set(mat_buy) == set(plan_buy)
-    for tid, qty in mat_buy.items():
-        assert plan_buy[tid] == qty, f"buy basis differs for type {tid}"
 
 
 def test_materials_toggle_flips_buy_set(client):

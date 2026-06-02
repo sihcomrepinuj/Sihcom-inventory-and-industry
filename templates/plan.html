@@ -4,14 +4,16 @@
 <style>
     .plan-header { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
     .plan-header h2 { margin:0; }
-    section.plan-section { margin-bottom:2rem; }
-    section.plan-section h3 { margin-bottom:0.5rem; }
+    .plan-block { margin-bottom:2.5rem; }
+    .plan-block > h3 { margin-bottom:0.5rem; }
+    section.plan-section { margin-bottom:1.5rem; }
+    section.plan-section h4 { margin-bottom:0.5rem; }
     /* "Ready to start" is the answer to "what do I click in EVE now" — give it prominence. */
-    section#sec-ready {
+    section.sec-ready {
         border-left: 4px solid var(--pico-ins-color);
         padding-left: 1rem;
     }
-    section#sec-ready h3 { color: var(--pico-ins-color); }
+    section.sec-ready h4 { color: var(--pico-ins-color); }
     .login-banner {
         padding: 0.75rem 1rem;
         border-radius: var(--pico-border-radius);
@@ -22,13 +24,11 @@
 
 <div class="plan-header">
     <h2>Action Plan</h2>
-    <span class="text-muted" id="plan-summary">Plan &middot; {{ targets|length }} target{{ 's' if targets|length != 1 else '' }}</span>
+    <span class="text-muted" id="plan-summary">Plan &middot; {{ blocks|length }} product{{ 's' if blocks|length != 1 else '' }}</span>
     <button class="outline" id="btn-refresh" type="button" style="margin:0;">&#8635; Refresh</button>
     <a href="/" role="button" class="outline secondary" style="margin:0;">&larr; Build List</a>
     <a href="/materials" role="button" class="outline secondary" style="margin:0;">Materials &amp; build/buy &rarr;</a>
 </div>
-
-{% with next="plan_view" %}{% include "_station_picker.html" %}{% endwith %}
 
 {% if not authed %}
 <div class="login-banner" id="login-banner">
@@ -38,236 +38,136 @@
 </div>
 {% endif %}
 
+{% if blocks and authed %}
+<p class="text-muted" style="margin-top:-0.5rem;">
+  Each product is checked against its own station; stock you own is counted under every product that needs it.
+</p>
+{% endif %}
+
 {# activity_id -> label for the Ready section's Activity column. #}
 {% set activity_names = {1: "Manufacturing", 3: "TE Research", 4: "ME Research",
                          5: "Copying", 8: "Invention", 9: "Reaction", 11: "Reaction"} %}
 
-<!-- 1. Ready to start now -->
-<section class="plan-section" id="sec-ready" {% if not buckets.ready %}hidden{% endif %}>
-    <h3>&#9654; Ready to start now <span class="text-muted" id="count-ready">({{ buckets.ready|length }})</span></h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Product</th>
-                <th class="text-right">Qty to make</th>
-                <th>Activity</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody id="tbody-ready">
-            {% for r in buckets.ready %}
-            <tr>
-                <td>{{ r.name }}</td>
-                <td class="text-right">{{ r.shortfall | commas }}</td>
-                <td>{{ activity_names.get(r.activity_id, "Manufacturing") }}</td>
-                <td><a href="/blueprint/{{ r.blueprint_type_id }}">Open &rarr;</a></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+{% for block in blocks %}
+{% set buckets = block.buckets %}
+<div class="plan-block">
+    <h3>{{ block.name }} &times; {{ block.needed | commas }}</h3>
 
-<!-- 2. In progress -->
-<section class="plan-section" id="sec-inprogress" {% if not buckets.in_progress %}hidden{% endif %}>
-    <h3>&#9203; In progress <span class="text-muted" id="count-inprogress">({{ buckets.in_progress|length }})</span></h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Product</th>
-                <th class="text-right">Qty short</th>
-                <th>Completes</th>
-            </tr>
-        </thead>
-        <tbody id="tbody-inprogress">
-            {% for r in buckets.in_progress %}
-            <tr>
-                <td>{{ r.name }}</td>
-                <td class="text-right">{{ r.shortfall | commas }}</td>
-                <td>{% if r.end_date %}{{ r.end_date }}{% else %}<span class="text-muted">unknown</span>{% endif %}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+    {% with block=block, stations=station_ctx.stations %}{% include "_station_picker.html" %}{% endwith %}
 
-<!-- 3. Blocked -->
-<section class="plan-section" id="sec-blocked" {% if not buckets.blocked %}hidden{% endif %}>
-    <h3>&#128274; Blocked <span class="text-muted" id="count-blocked">({{ buckets.blocked|length }})</span></h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Product</th>
-                <th>Missing</th>
-            </tr>
-        </thead>
-        <tbody id="tbody-blocked">
-            {% for r in buckets.blocked %}
-            <tr>
-                <td>{{ r.name }}</td>
-                <td>
-                    {% for m in r.missing %}
-                        <a href="/blueprint/{{ m.type_id }}">{{ m.name }}</a> &times; {{ m.shortfall | commas }}{% if not loop.last %}<br>{% endif %}
-                    {% else %}
-                        <span class="text-muted">&mdash;</span>
-                    {% endfor %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+    <!-- 1. Ready to start now -->
+    <section class="plan-section sec-ready" {% if not buckets.ready %}hidden{% endif %}>
+        <h4>&#9654; Ready to start now <span class="text-muted">({{ buckets.ready|length }})</span></h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th class="text-right">Qty to make</th>
+                    <th>Activity</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in buckets.ready %}
+                <tr>
+                    <td>{{ r.name }}</td>
+                    <td class="text-right">{{ r.shortfall | commas }}</td>
+                    <td>{{ activity_names.get(r.activity_id, "Manufacturing") }}</td>
+                    <td><a href="/blueprint/{{ r.blueprint_type_id }}">Open &rarr;</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
 
-<!-- 4. Buy list -->
-<section class="plan-section" id="sec-buy" {% if not buckets.buy %}hidden{% endif %}>
-    <h3>&#128722; Buy list <span class="text-muted" id="count-buy">({{ buckets.buy|length }})</span></h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Item</th>
-                <th class="text-right">To buy</th>
-                <th>Haul from</th>
-                <th class="text-right">Volume m&sup3;</th>
-                <th class="text-right">At station</th>
-            </tr>
-        </thead>
-        <tbody id="tbody-buy">
-            {% for r in buckets.buy %}
-            <tr>
-                <td><a href="/market/{{ r.type_id }}">{{ r.name }}</a></td>
-                <td class="text-right">{{ r.to_buy | commas }}</td>
-                <td>{% for h in r.haul %}{{ h.qty | commas }} @ {{ h.name }}{% if not loop.last %}, {% endif %}{% else %}&mdash;{% endfor %}</td>
-                <td class="text-right">{{ r.to_buy_volume | vol }}</td>
-                <td class="text-right">{{ r.at_station | commas }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+    <!-- 2. In progress -->
+    <section class="plan-section sec-inprogress" {% if not buckets.in_progress %}hidden{% endif %}>
+        <h4>&#9203; In progress <span class="text-muted">({{ buckets.in_progress|length }})</span></h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th class="text-right">Qty short</th>
+                    <th>Completes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in buckets.in_progress %}
+                <tr>
+                    <td>{{ r.name }}</td>
+                    <td class="text-right">{{ r.shortfall | commas }}</td>
+                    <td>{% if r.end_date %}{{ r.end_date }}{% else %}<span class="text-muted">unknown</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
 
-{% if not buckets.ready and not buckets.in_progress and not buckets.blocked and not buckets.buy %}
+    <!-- 3. Blocked -->
+    <section class="plan-section sec-blocked" {% if not buckets.blocked %}hidden{% endif %}>
+        <h4>&#128274; Blocked <span class="text-muted">({{ buckets.blocked|length }})</span></h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Missing</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in buckets.blocked %}
+                <tr>
+                    <td>{{ r.name }}</td>
+                    <td>
+                        {% for m in r.missing %}
+                            <a href="/blueprint/{{ m.type_id }}">{{ m.name }}</a> &times; {{ m.shortfall | commas }}{% if not loop.last %}<br>{% endif %}
+                        {% else %}
+                            <span class="text-muted">&mdash;</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <!-- 4. Buy list -->
+    <section class="plan-section sec-buy" {% if not buckets.buy %}hidden{% endif %}>
+        <h4>&#128722; Buy list <span class="text-muted">({{ buckets.buy|length }})</span></h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th class="text-right">To buy</th>
+                    <th>Haul from</th>
+                    <th class="text-right">Volume m&sup3;</th>
+                    <th class="text-right">At station</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in buckets.buy %}
+                <tr>
+                    <td><a href="/market/{{ r.type_id }}">{{ r.name }}</a></td>
+                    <td class="text-right">{{ r.to_buy | commas }}</td>
+                    <td>{% for h in r.haul %}{{ h.qty | commas }} @ {{ h.name }}{% if not loop.last %}, {% endif %}{% else %}&mdash;{% endfor %}</td>
+                    <td class="text-right">{{ r.to_buy_volume | vol }}</td>
+                    <td class="text-right">{{ r.at_station | commas }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    {% if not buckets.ready and not buckets.in_progress and not buckets.blocked and not buckets.buy %}
+    <p class="text-muted">Nothing to do for this product.</p>
+    {% endif %}
+</div>
+{% else %}
 <p class="text-muted" id="plan-empty">
     Nothing to do. <a href="/">Add a target to your build list</a> to begin.
 </p>
-{% endif %}
+{% endfor %}
 {% endblock %}
 
 {% block scripts %}
-<script>
-/*
- * Live refresh: progressive enhancement only. The page is fully readable with
- * JS disabled (sections rendered server-side, hidden when empty).
- *
- * Approach: in-place re-render of the four sections. The ⟳ button fetches
- * /api/plan, then rebuilds each <tbody> and toggles each <section hidden>.
- * Chosen over location.reload() so a refresh doesn't lose scroll position and
- * feels instant — and the row shapes are simple enough to render cleanly.
- *
- * NOTE: the buy table reads only flat fields plus `haul`, a pre-baked list of
- * {name, qty} attached server-side (plan.attach_haul_breakdown). We bake names
- * in _compute_plan precisely so the JS never has to touch the raw `elsewhere`
- * dict, whose integer keys jsonify() would coerce to strings.
- */
-(function () {
-    const btn = document.getElementById('btn-refresh');
-    if (!btn) return;
-
-    const ACTIVITY_NAMES = {
-        1: 'Manufacturing', 3: 'TE Research', 4: 'ME Research',
-        5: 'Copying', 8: 'Invention', 9: 'Reaction', 11: 'Reaction',
-    };
-
-    function fmtNum(n) { return (n || 0).toLocaleString(); }
-    function fmtVol(n) {
-        return (n === 0 || n == null)
-            ? '-'
-            : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-    function esc(s) {
-        const d = document.createElement('div');
-        d.textContent = s == null ? '' : String(s);
-        return d.innerHTML;
-    }
-
-    function setSection(id, rows, build) {
-        const section = document.getElementById(id);
-        const tbody = section.querySelector('tbody');
-        const count = section.querySelector('h3 span');
-        tbody.innerHTML = rows.map(build).join('');
-        if (count) count.textContent = '(' + rows.length + ')';
-        section.hidden = rows.length === 0;
-    }
-
-    // NOTE: these row builders mirror the Jinja <tr> markup in the sections above. If you change a section's columns, update BOTH the Jinja row and the matching builder here, or the post-refresh table will drift from the initial render.
-    function rowReady(r) {
-        const act = ACTIVITY_NAMES[r.activity_id] || 'Manufacturing';
-        return '<tr>' +
-            '<td>' + esc(r.name) + '</td>' +
-            '<td class="text-right">' + fmtNum(r.shortfall) + '</td>' +
-            '<td>' + esc(act) + '</td>' +
-            '<td><a href="/blueprint/' + r.blueprint_type_id + '">Open &rarr;</a></td>' +
-            '</tr>';
-    }
-
-    function rowInProgress(r) {
-        const ends = r.end_date
-            ? esc(r.end_date)
-            : '<span class="text-muted">unknown</span>';
-        return '<tr>' +
-            '<td>' + esc(r.name) + '</td>' +
-            '<td class="text-right">' + fmtNum(r.shortfall) + '</td>' +
-            '<td>' + ends + '</td>' +
-            '</tr>';
-    }
-
-    function rowBlocked(r) {
-        const missing = (r.missing || []);
-        const cell = missing.length
-            ? missing.map(m =>
-                '<a href="/blueprint/' + m.type_id + '">' + esc(m.name) + '</a> &times; ' + fmtNum(m.shortfall)
-              ).join('<br>')
-            : '<span class="text-muted">&mdash;</span>';
-        return '<tr><td>' + esc(r.name) + '</td><td>' + cell + '</td></tr>';
-    }
-
-    function rowBuy(r) {
-        const haul = (r.haul || []);
-        const haulCell = haul.length
-            ? haul.map(h => fmtNum(h.qty) + ' @ ' + esc(h.name)).join(', ')
-            : '&mdash;';
-        return '<tr>' +
-            '<td><a href="/market/' + r.type_id + '">' + esc(r.name) + '</a></td>' +
-            '<td class="text-right">' + fmtNum(r.to_buy) + '</td>' +
-            '<td>' + haulCell + '</td>' +
-            '<td class="text-right">' + fmtVol(r.to_buy_volume) + '</td>' +
-            '<td class="text-right">' + fmtNum(r.at_station) + '</td>' +
-            '</tr>';
-    }
-
-    btn.addEventListener('click', function () {
-        const original = btn.textContent;
-        btn.setAttribute('aria-busy', 'true');
-        btn.textContent = 'Refreshing…';
-        fetch('/api/plan')
-            .then(r => r.json())
-            .then(buckets => {
-                setSection('sec-ready', buckets.ready || [], rowReady);
-                setSection('sec-inprogress', buckets.in_progress || [], rowInProgress);
-                setSection('sec-blocked', buckets.blocked || [], rowBlocked);
-                setSection('sec-buy', buckets.buy || [], rowBuy);
-
-                const empty = document.getElementById('plan-empty');
-                if (empty) {
-                    const any = (buckets.ready || []).length || (buckets.in_progress || []).length ||
-                                (buckets.blocked || []).length || (buckets.buy || []).length;
-                    empty.hidden = !!any;
-                }
-            })
-            .catch(err => console.error('Refresh failed:', err))
-            .finally(() => {
-                btn.removeAttribute('aria-busy');
-                btn.textContent = original;
-            });
-    });
-})();
-</script>
+<script>document.getElementById('btn-refresh')?.addEventListener('click', () => location.reload());</script>
 {% endblock %}
