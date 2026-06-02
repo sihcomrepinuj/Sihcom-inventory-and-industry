@@ -1,18 +1,18 @@
-{# Shared "Building at" station picker. Receives `station_ctx` and reads the
-   `next`/`view` vars supplied by the including template via {% with %}. Renders
-   only when stations exist; auto-submits on change with a <noscript> fallback. #}
-{% if station_ctx and station_ctx.stations %}
-<form method="post" action="{{ url_for('build_station') }}" class="controls" style="margin:0 0 0.75rem;">
-  <input type="hidden" name="next" value="{{ next }}">
-  {% if view %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+{# Per-product "Building at" station picker. Receives `block` + `stations`.
+   Renders only when stations exist; auto-submits on change with a <noscript>
+   fallback. #}
+{% if stations %}
+<form method="post" action="{{ url_for('build_station') }}" class="controls" style="margin:0 0 0.5rem;">
+  <input type="hidden" name="type_id" value="{{ block.type_id }}">
   <label>Building at
     <select name="station_id" onchange="this.form.submit()">
-      {% set ids = station_ctx.stations | map(attribute='id') | list %}
-      {% for s in station_ctx.stations %}
-        <option value="{{ s.id }}" {% if s.id == station_ctx.selected %}selected{% endif %}>{{ s.name }}</option>
+      <option value="" {% if not block.station %}selected{% endif %}>&mdash; choose &mdash;</option>
+      {% set ids = stations | map(attribute='id') | list %}
+      {% for s in stations %}
+        <option value="{{ s.id }}" {% if s.id == block.station %}selected{% endif %}>{{ s.name }}</option>
       {% endfor %}
-      {% if station_ctx.selected and station_ctx.selected not in ids %}
-        <option value="{{ station_ctx.selected }}" selected>Saved station ({{ station_ctx.selected }})</option>
+      {% if block.station and block.station not in ids %}
+        <option value="{{ block.station }}" selected>Saved station ({{ block.station }})</option>
       {% endif %}
     </select>
   </label>

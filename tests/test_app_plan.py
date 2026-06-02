@@ -25,7 +25,7 @@ def client(tmp_path, monkeypatch):
     # bound default of each so the routes write to the temp file, never the repo.
     for fn in (build_list.load, build_list.save, build_list.add_target,
                build_list.remove_target, build_list.toggle_buy,
-               build_list.set_build_station):
+               build_list.set_build_station, build_list.set_target_station):
         monkeypatch.setattr(fn, "__defaults__", (tmp_list,))
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -122,23 +122,96 @@ def test_plan_unauthed_shows_login_banner(client):
 
 
 def test_api_plan_unauthed_returns_json(client):
-    """GET /api/plan returns the four buckets as JSON."""
+    """GET /api/plan returns one block per product, each with its buckets."""
     if not _sde_available():
         pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
     resp = client.get("/api/plan")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["type_id"] == 2456
+    assert set(data[0]["buckets"].keys()) == {"ready", "in_progress", "blocked", "buy"}
 
 
-def test_build_station_next_materials_redirects(client):
-    """next=materials redirects to /materials carrying the view param."""
+def test_build_station_sets_per_target(client):
+    """POST /build-station persists the station on ONE target, redirects to /plan."""
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
     resp = client.post(
         "/build-station",
-        data={"station_id": "60003760", "next": "materials", "view": "flat"},
+        data={"type_id": "2456", "station_id": "60003760"},
     )
     assert resp.status_code == 302
-    assert "/materials?view=flat" in resp.headers["Location"]
+    assert "/plan" in resp.headers["Location"]
+    target = next(t for t in build_list.load()["targets"] if t["type_id"] == 2456)
+    assert target["build_station"] == 60003760
+
+
+def test_build_station_empty_clears_per_target(client):
+    """An empty station_id clears that target's build_station."""
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    build_list.set_target_station(2456, 60003760)
+    resp = client.post(
+        "/build-station",
+        data={"type_id": "2456", "station_id": ""},
+    )
+    assert resp.status_code == 302
+    target = next(t for t in build_list.load()["targets"] if t["type_id"] == 2456)
+    assert target["build_station"] is None
+
+
+def test_compute_plan_returns_one_block_per_product(monkeypatch):
+    """_compute_plan yields one block per resolved target, each with buckets."""
+    import app
+    import plan
+    t1 = plan.Target(type_id=1, name="A", blueprint_type_id=10, needed=1,
+                     children=[], build_station=111)
+    t2 = plan.Target(type_id=2, name="B", blueprint_type_id=20, needed=1,
+                     children=[], build_station=None)
+    monkeypatch.setattr(app, "_resolve_targets", lambda sde, targets: [t1, t2])
+
+    class _SDE:
+        def get_type_volumes(self, ids):
+            return {}
+
+    monkeypatch.setattr(app, "get_sde", lambda: _SDE())
+    monkeypatch.setattr(app, "get_authed_preston_from_session", lambda: None)
+    monkeypatch.setattr(app.build_list, "load",
+                        lambda: {"targets": [{"type_id": 1}, {"type_id": 2}], "buy_set": []})
+    with app.app.test_request_context():
+        blocks, authed, ctx = app._compute_plan()
+    assert [b["type_id"] for b in blocks] == [1, 2]
+    assert authed is False
+    assert all("buckets" in b and set(b["buckets"]) == {"ready", "in_progress", "blocked", "buy"}
+               for b in blocks)
+
+
+def test_plan_unauthed_shows_both_product_names(client):
+    """GET /plan (unauthed) with two targets renders both product blocks."""
+    if not _sde_available():
+        pytest.skip("SDE database not available — run setup_sde.py first")
+    build_list.add_target({
+        "type_id": 2456, "name": "Warrior I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    build_list.add_target({
+        "type_id": 2454, "name": "Hornet I", "qty": 1, "runs": 1, "me": 10,
+        "structure_bonus": 0.0,
+    })
+    resp = client.get("/plan")
+    assert resp.status_code == 200
+    assert b"Warrior I" in resp.data
+    assert b"Hornet I" in resp.data
 
 
 def test_plan_unauthed_no_station_picker(client):
