@@ -1,7 +1,8 @@
 """Persistence for the user's build list and global build/buy choices.
 
 Stores intent only (targets + which components to buy instead of build),
-never execution progress. Shape: {"targets": [...], "buy_set": [type_id, ...], "build_station": <int|None>}.
+never execution progress. Shape: {"targets": [...], "buy_set": [type_id, ...]},
+where each target carries its own "build_station" (<int|None>).
 
 The file lives in DATA_DIR when that env var is set (e.g. a Railway volume
 mounted at /data), so the build list survives redeploys. It defaults to this
@@ -16,21 +17,24 @@ DEFAULT_PATH = DATA_DIR / "build_list.json"
 
 
 def load(path=DEFAULT_PATH) -> dict:
-    """Return {"targets": [...], "buy_set": [...], "build_station": <int|None>}.
+    """Return {"targets": [...], "buy_set": [...]}.
 
     Backward-compatible: a legacy bare-list file loads as
-    {"targets": <list>, "buy_set": []}. A legacy file lacking the
-    "build_station" key defaults build_station to None.
+    {"targets": <list>, "buy_set": []}. Each target is normalized to carry a
+    per-target "build_station" (defaulting to None). Any legacy top-level
+    global "build_station" is dropped (the value now lives on each target).
     """
     p = Path(path)
     if not p.exists():
-        return {"targets": [], "buy_set": [], "build_station": None}
+        return {"targets": [], "buy_set": []}
     data = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return {"targets": data, "buy_set": [], "build_station": None}
+        data = {"targets": data, "buy_set": []}
     data.setdefault("targets", [])
     data.setdefault("buy_set", [])
-    data.setdefault("build_station", None)
+    data.pop("build_station", None)
+    for t in data["targets"]:
+        t.setdefault("build_station", None)
     return data
 
 
@@ -42,6 +46,7 @@ def save(data: dict, path=DEFAULT_PATH) -> None:
 
 def add_target(target: dict, path=DEFAULT_PATH) -> None:
     """Upsert a target by type_id (replace in place, else append)."""
+    target.setdefault("build_station", None)
     data = load(path)
     targets = data["targets"]
     for i, t in enumerate(targets):
@@ -70,8 +75,23 @@ def toggle_buy(type_id: int, path=DEFAULT_PATH) -> None:
     save(data, path)
 
 
+def set_target_station(type_id: int, station_id: int | None, path=DEFAULT_PATH) -> None:
+    """Set (or clear, with None) the build station for one target."""
+    data = load(path)
+    for t in data["targets"]:
+        if t["type_id"] == type_id:
+            t["build_station"] = station_id
+            break
+    save(data, path)
+
+
 def set_build_station(station_id: int | None, path=DEFAULT_PATH) -> None:
-    """Persist the global build station (an int facility id, or None to clear)."""
+    """Persist the global build station (an int facility id, or None to clear).
+
+    Retired in favor of per-target build_station via set_target_station; kept
+    until the /build-station route is rewired. The written top-level key is
+    now ignored by load().
+    """
     data = load(path)
     data["build_station"] = station_id
     save(data, path)
