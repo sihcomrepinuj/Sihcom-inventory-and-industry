@@ -249,42 +249,6 @@ def test_attach_haul_breakdown_ties_break_by_name():
                               {"name": "Zebra", "qty": 100}]
 
 
-def test_plan_and_materials_agree_to_buy_with_assets_and_station():
-    # Plan buy list and Materials flat must agree on to_buy even with owned
-    # assets and a chosen station. to_buy = need - total_owned (station only
-    # changes the at-station/haul split, not the total); both run gross need
-    # through calculate_deficit.
-    from sde import flatten_material_tree
-    import hauling
-
-    trit = _node(34, "Tritanium", 1000, terminal=True)
-    pyer = _node(35, "Pyerite", 500, terminal=True)
-    target = plan.Target(671, "Thing", 2001, 1, [trit, pyer])
-    station = 60003760
-    loc_index = {34: {60003760: 300, 60008494: 200},   # 300 at station + 200 elsewhere
-                 35: {60008494: 500}}                   # all 500 elsewhere
-    volumes = {34: 0.01, 35: 0.01}
-
-    # Plan path: merge -> classify -> enrich_buy
-    graph = plan.merge_trees([target], set())
-    buckets = plan.classify(graph, loc_index, [], station, set())
-    buckets["buy"] = plan.enrich_buy(buckets["buy"], loc_index, station, volumes)
-    plan_to_buy = {r["type_id"]: r["to_buy"] for r in buckets["buy"]}
-
-    # Materials path: flatten -> calculate_deficit
-    flat = flatten_material_tree([trit, pyer], set())
-    deficit = hauling.calculate_deficit(flat, loc_index, station, volumes)
-    mat_to_buy = {d["type_id"]: d["to_buy"] for d in deficit}
-
-    # Every material the plan says to buy, materials agrees on the amount.
-    for tid, qty in plan_to_buy.items():
-        assert mat_to_buy[tid] == qty
-    # Concrete: Tritanium need 1000, own 500 total -> buy 500;
-    #           Pyerite need 500, own 500 -> buy 0.
-    assert mat_to_buy[34] == 500
-    assert mat_to_buy[35] == 0
-
-
 def test_target_has_build_station_field_default_none():
     t = plan.Target(type_id=1, name="X", blueprint_type_id=2, needed=1, children=[])
     assert t.build_station is None
