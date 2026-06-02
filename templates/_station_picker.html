@@ -5,7 +5,7 @@
 <form method="post" action="{{ url_for('build_station') }}" class="controls" style="margin:0 0 0.5rem;">
   <input type="hidden" name="type_id" value="{{ block.type_id }}">
   <label>Building at
-    <select name="station_id" onchange="this.form.submit()">
+    <select name="station_id" aria-label="Building {{ block.name }} at" onchange="this.form.submit()">
       <option value="" {% if not block.station %}selected{% endif %}>&mdash; choose &mdash;</option>
       {% set ids = stations | map(attribute='id') | list %}
       {% for s in stations %}

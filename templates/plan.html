@@ -38,6 +38,12 @@
 </div>
 {% endif %}
 
+{% if blocks and authed %}
+<p class="text-muted" style="margin-top:-0.5rem;">
+  Each product is checked against its own station; stock you own is counted under every product that needs it.
+</p>
+{% endif %}
+
 {# activity_id -> label for the Ready section's Activity column. #}
 {% set activity_names = {1: "Manufacturing", 3: "TE Research", 4: "ME Research",
                          5: "Copying", 8: "Invention", 9: "Reaction", 11: "Reaction"} %}
