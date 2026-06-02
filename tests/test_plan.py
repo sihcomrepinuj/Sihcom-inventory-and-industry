@@ -283,3 +283,36 @@ def test_plan_and_materials_agree_to_buy_with_assets_and_station():
     #           Pyerite need 500, own 500 -> buy 0.
     assert mat_to_buy[34] == 500
     assert mat_to_buy[35] == 0
+
+
+def test_target_has_build_station_field_default_none():
+    t = plan.Target(type_id=1, name="X", blueprint_type_id=2, needed=1, children=[])
+    assert t.build_station is None
+
+
+def test_target_build_station_settable():
+    t = plan.Target(type_id=1, name="X", blueprint_type_id=2, needed=1, children=[],
+                    build_station=60003760)
+    assert t.build_station == 60003760
+
+
+def test_attach_owned_totals_nets_owned_anywhere_and_volumes():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 5000},
+            {"type_id": 35, "name": "Pyerite", "quantity": 1000}]
+    owned = {34: 2000}                       # flat owned-anywhere index
+    volumes = {34: 0.01, 35: 0.01}
+    out = plan.attach_owned_totals(rows, owned, volumes)
+    trit = next(r for r in out if r["type_id"] == 34)
+    assert trit["total"] == 5000
+    assert trit["owned"] == 2000
+    assert trit["to_buy"] == 3000
+    assert trit["total_volume"] == 50.0
+    pyer = next(r for r in out if r["type_id"] == 35)
+    assert pyer["to_buy"] == 1000            # nothing owned
+
+
+def test_attach_owned_totals_never_negative_and_nonmutating():
+    rows = [{"type_id": 34, "name": "Tritanium", "quantity": 100}]
+    out = plan.attach_owned_totals(rows, {34: 999}, {34: 0.01})
+    assert out[0]["to_buy"] == 0
+    assert "total" not in rows[0]            # input untouched
