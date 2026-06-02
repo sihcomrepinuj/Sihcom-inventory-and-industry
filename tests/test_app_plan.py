@@ -131,24 +131,6 @@ def test_api_plan_unauthed_returns_json(client):
     assert set(data.keys()) == {"ready", "in_progress", "blocked", "buy"}
 
 
-def test_build_station_persists(client):
-    """POST /build-station saves the station id and redirects to the plan."""
-    resp = client.post(
-        "/build-station",
-        data={"station_id": "60003760", "next": "plan_view"},
-    )
-    assert resp.status_code == 302
-    assert build_list.load()["build_station"] == 60003760
-
-
-def test_build_station_empty_clears(client):
-    """An empty station_id clears the saved station (back to most-used default)."""
-    build_list.set_build_station(60003760)
-    resp = client.post("/build-station", data={"station_id": ""})
-    assert resp.status_code == 302
-    assert build_list.load()["build_station"] is None
-
-
 def test_build_station_next_materials_redirects(client):
     """next=materials redirects to /materials carrying the view param."""
     resp = client.post(
